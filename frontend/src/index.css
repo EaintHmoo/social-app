@@ -1,0 +1,9 @@
+/* Tailwind v4: one import replaces the old @tailwind base/components/utilities trio, and the
+   config lives here in CSS rather than in a tailwind.config.js. */
+@import "tailwindcss";
+
+/* Tells the browser to render form controls and scrollbars in the OS light/dark setting, which
+   is what the dark: classes throughout the components are keyed to. */
+:root {
+  color-scheme: light dark;
+}

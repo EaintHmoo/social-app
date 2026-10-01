@@ -1,0 +1,73 @@
+services:
+  app:
+    build: .
+    container_name: my-app-api
+    restart: unless-stopped
+    # Wait until mongo actually answers pings, not just until its container exists —
+    # otherwise the first mongoose.connect() races the database and the app exits.
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      PORT: 3000
+      # Inside the compose network the database is "mongo", never 127.0.0.1 —
+      # localhost in a container means the container itself. This overrides MONGO_URI
+      # from .env, since dotenv does not overwrite variables already in the environment.
+      MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASS}@mongo:27017/myapp?authSource=admin
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN}
+      JWT_SESSION_MAX_LIFETIME: ${JWT_SESSION_MAX_LIFETIME}
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+      ASSET_BASE_URL: ${ASSET_BASE_URL}
+      TZ: UTC
+    volumes:
+      # Your source, live-mounted: edit a file on the host and nodemon restarts inside.
+      - .:/app
+      # Keeps the container's own node_modules (installed for Linux) from being
+      # hidden by the host folder mounted above.
+      - /app/node_modules
+
+  mongo:
+    image: mongo:8
+    container_name: my-app-mongo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASS}
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Browser GUI for MongoDB, like phpMyAdmin/Adminer for MySQL.
+  # Visit http://localhost:8081 after `docker compose up -d`.
+  mongo-express:
+    image: mongo-express:latest
+    container_name: my-app-mongo-express
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_USER}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_PASS}
+      # "mongo" here is the service name above, not localhost — Docker's internal DNS
+      # resolves service names to the right container on the compose network.
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_USER}:${MONGO_PASS}@mongo:27017/
+      ME_CONFIG_BASICAUTH: "false"
+
+volumes:
+  mongo-data:
