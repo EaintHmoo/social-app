@@ -11,6 +11,7 @@ import {
   sessions,
   me,
 } from "./auth.controller.js";
+import { loginAccountLimiter, loginIpLimiter, refreshLimiter, registerLimiter } from "./auth.rateLimit.js";
 
 // Laravel: this file is the routes/api.php entries for the "auth" group — but it lives INSIDE
 // the module it belongs to, so everything /auth does is in one folder. server.ts mounts it.
@@ -23,9 +24,9 @@ import {
 // Middleware runs left to right: validate(...) is the FormRequest, then the controller method.
 const router = Router();
 
-router.post("/register", validate(registerSchema), register);
-router.post("/login", validate(loginSchema), login);
-router.post("/refresh", validate(refreshSchema), refresh); // no `auth` middleware — the refresh token itself is the credential here
+router.post("/register", registerLimiter, validate(registerSchema), register);
+router.post("/login", loginIpLimiter, loginAccountLimiter, validate(loginSchema), login);
+router.post("/refresh", refreshLimiter, validate(refreshSchema), refresh); 
 router.post("/logout", auth, logout); // revokes only the device that asked
 router.post("/logout-all", auth, logoutAll); // "sign me out everywhere"
 router.get("/sessions", auth, sessions); // which devices are currently signed in

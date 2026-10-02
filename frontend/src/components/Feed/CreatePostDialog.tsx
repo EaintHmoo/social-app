@@ -3,18 +3,22 @@ import { ChevronDownIcon, X } from 'lucide-react';
 import Avator from './Avator';
 import { useState } from 'react';
 
+type Person = {
+  id: number;
+  name: string;
+}
 
-const people = [
+const people:Person[] = [
   { id: 1, name: 'Leslie Alexander' },
 ]
 
 type CreatePostDialogProps = {
     open: boolean | undefined;
-    setOpen: ()=>{};
+    setOpen: (open: boolean) => void;
 }
 const CreatePostDialog = ({open=false, setOpen} : CreatePostDialogProps) => {
   const [query, setQuery] = useState('')
-  const [selectedPerson, setSelectedPerson] = useState(null)
+  const [selectedPerson, setSelectedPerson] = useState<Person | null>(null)
 
   const filteredPeople =
     query === ''
@@ -67,7 +71,7 @@ const CreatePostDialog = ({open=false, setOpen} : CreatePostDialogProps) => {
                                 className="block w-full rounded-md bg-white py-1.5 pr-12 pl-3 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6"
                                 onChange={(event) => setQuery(event.target.value)}
                                 onBlur={() => setQuery('')}
-                                displayValue={(person) => person?.name}
+                                displayValue={(person:Person) => person?.name}
                                 />
                                 <ComboboxButton className="absolute inset-y-0 right-0 flex items-center rounded-r-md px-2 focus:outline-hidden">
                                 <ChevronDownIcon className="size-5 text-gray-400" aria-hidden="true" />

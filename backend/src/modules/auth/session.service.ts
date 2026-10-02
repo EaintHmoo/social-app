@@ -57,62 +57,50 @@ async function issuePair(
   return { accessToken, refreshToken };
 }
 
-// Laravel: roughly the refresh-token grant in Passport. Trades a still-valid refresh token for a
-// brand new access/refresh pair, so the client never has to ask the user to log in again.
 export async function rotate(refreshToken: string): Promise<TokenPair> {
   try {
-    verifyRefreshToken(refreshToken); // throws if expired/invalid/wrong secret
+    verifyRefreshToken(refreshToken);
   } catch {
     throw new AppError(401, "Invalid or expired refresh token.");
   }
 
-  // The token must be one we actually issued and still recognise. A signature check alone
-  // isn't enough: a rotated-away token is still perfectly well signed.
-  const stored = await RefreshToken.findOne({ tokenHash: hashToken(refreshToken) });
-  if (!stored) {
+  const tokenHash = hashToken(refreshToken);
+
+  // 1. CLAIM the token atomically. Only one concurrent request can match `revokedAt: null`.
+  const claimed = await RefreshToken.findOneAndUpdate(
+    { tokenHash, revokedAt: null },
+    { revokedAt: new Date(), revokedReason: "rotated" },
+    { returnDocument: "after" }
+  ).exec();
+
+  // 2. Lost the claim (or the token never existed). Now work out WHY.
+  if (!claimed) {
+    const existing = await RefreshToken.findOne({ tokenHash }).exec();
+    if (existing?.revokedReason === "rotated") {
+      // Someone already traded this token in. A second holder means it was copied.
+      await RefreshToken.revokeSession(existing.sessionId, "reuse");
+      throw new AppError(401, "Refresh token reuse detected. Session revoked — please log in again.");
+    }
     throw new AppError(401, "Invalid or expired refresh token.");
   }
 
-  if (stored.revokedAt) {
-    // REUSE DETECTION, but only for a token the legitimate client already traded in. Two
-    // parties holding one rotation chain means it was copied, and we can't tell which side is
-    // honest (the thief may have refreshed first, pushing the real client onto the stale
-    // token), so we kill the whole session. A token killed by a logout is simply dead and
-    // says nothing about theft, so replaying that one must not nuke the user's other tokens.
-    if (stored.revokedReason === "rotated") {
-      await RefreshToken.revokeSession(stored.sessionId, "reuse");
-      throw new AppError(401, "Refresh token reuse detected. Session revoked — please log in again.");
-    }
-    throw new AppError(401, "Refresh token revoked — please log in again.");
-  }
-
-  // The hard ceiling on sliding sessions: rotation moves the token's expiry forward, but never
-  // this. Past it, refreshing is no longer enough and the user has to re-authenticate.
-  if (Date.now() - stored.sessionStartedAt.getTime() > SESSION_MAX_LIFETIME_MS) {
-    await RefreshToken.revokeSession(stored.sessionId, "expired");
+  // 3. We own this token now. Every other check happens AFTER the claim.
+  if (Date.now() - claimed.sessionStartedAt.getTime() > SESSION_MAX_LIFETIME_MS) {
+    await RefreshToken.revokeSession(claimed.sessionId, "expired");
     throw new AppError(401, "Session expired — please log in again.");
   }
 
-  const user = await User.findById(stored.user);
+  const user = await User.findById(claimed.user);
   if (!user) {
-    await RefreshToken.revokeSession(stored.sessionId, "expired");
+    await RefreshToken.revokeSession(claimed.sessionId, "expired");
     throw new AppError(401, "Invalid or expired refresh token.");
   }
 
-  // Rotate WITHIN the same session: same sessionId, same original login time, same device
-  // labels, new token.
-  const tokens = await issuePair(user, stored.sessionId, stored.sessionStartedAt, {
-    userAgent: stored.userAgent,
-    ip: stored.ip,
+  // 4. Issue the next token in the same session.
+  return issuePair(user, claimed.sessionId, claimed.sessionStartedAt, {
+    userAgent: claimed.userAgent,
+    ip: claimed.ip,
   });
-
-  // Only now retire the old token, so a crash mid-rotation can't strand the client with no
-  // usable token at all.
-  stored.revokedAt = new Date();
-  stored.revokedReason = "rotated";
-  await stored.save();
-
-  return tokens;
 }
 
 // Revokes only one device's session. Idempotent, so an already-dead session is fine.

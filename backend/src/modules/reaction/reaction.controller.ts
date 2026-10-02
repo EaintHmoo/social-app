@@ -6,11 +6,6 @@ import type { PopulatedReaction, ReactInput, ReactionUser } from "./reaction.typ
 
 type PostParams = { postId: string };
 
-async function ensurePostExists(req: Request<PostParams>, res: Response): Promise<boolean> {
-  if (await reactionService.postExists(req.params.postId)) return true;
-  res.status(404).json({ message: "Post not found." });
-  return false;
-}
 
 // GET /posts/:postId/reactions?type=love&page=1&limit=20
 export async function index(req: Request<PostParams>, res: Response) {
@@ -22,7 +17,7 @@ export async function index(req: Request<PostParams>, res: Response) {
     });
     return;
   }
-  if (!(await ensurePostExists(req, res))) return;
+  if (!(await reactionService.assertPostExists(req.params.postId))) return;
 
   const { postId } = req.params;
   const query = parsed.data;
@@ -43,7 +38,7 @@ export async function index(req: Request<PostParams>, res: Response) {
 
 // PUT /posts/:postId/reactions   { "type": "love" }
 export async function react(req: Request<PostParams, unknown, ReactInput>, res: Response) {
-  if (!(await ensurePostExists(req, res))) return;
+  if (!(await reactionService.assertPostExists(req.params.postId))) return;
 
   const { postId } = req.params;
   await reactionService.react(postId, req.user!._id, req.body.type);
@@ -56,7 +51,7 @@ export async function react(req: Request<PostParams, unknown, ReactInput>, res: 
 
 // DELETE /posts/:postId/reactions
 export async function remove(req: Request<PostParams>, res: Response) {
-  if (!(await ensurePostExists(req, res))) return;
+  if (!(await reactionService.assertPostExists(req.params.postId))) return;
 
   const { postId } = req.params;
   await reactionService.removeReaction(postId, req.user!._id);

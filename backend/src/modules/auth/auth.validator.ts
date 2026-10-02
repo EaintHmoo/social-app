@@ -7,17 +7,27 @@ import { z } from "zod";
 // `error` covers a missing/non-string value, min(1) covers an empty (or, after trim, blank) one.
 const required = (field: string) => z.string({ error: `${field} is required.` });
 
+const BCRYPT_MAX_BYTES = 72;
+
+const email = required("email")
+  .trim()
+  .toLowerCase()
+  .pipe(z.email({ error: "Enter a valid email address." }));
+
 export const registerSchema = z.object({
-  name: required("name").trim().min(1, "name is required."),
-  email: required("email").trim().min(1, "email is required."),
-  // Never trim a password — leading/trailing spaces are part of it.
-  password: required("password").min(1, "password is required."),
-  // Laravel-style stricter rules would go here, e.g. z.email() or .min(8).
+  name: required("name").trim().min(1, "name is required.").max(50, "name must be at most 50 characters."),
+  email,
+  password: required("password")
+    .min(8, "password must be at least 8 characters.")
+    .refine((p) => Buffer.byteLength(p, "utf8") <= BCRYPT_MAX_BYTES, {
+      error: "password is too long.",
+    }),
 });
 
+// Login: only check that something was sent — see below.
 export const loginSchema = z.object({
-  email: required("email").trim().min(1, "email is required."),
-  password: required("password").min(1, "password is required."),
+  email: required("email").trim().toLowerCase().min(1, "email is required."),
+  password: required("password").min(1, "password is required.").max(1024, "password is too long."),
 });
 
 export const refreshSchema = z.object({

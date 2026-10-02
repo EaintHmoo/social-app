@@ -8,12 +8,18 @@ import {
   type ReactionSummary,
   type ReactionType,
 } from "./reaction.types.js";
+import { AppError } from "../../shared/errors/AppError.js";
 
 type Id = Types.ObjectId | string;
 
 export async function postExists(postId: string): Promise<boolean> {
   if (!mongoose.isObjectIdOrHexString(postId)) return false;
   return (await Post.exists({ _id: postId })) !== null;
+}
+
+export async function assertPostExists(postId: string): Promise<boolean> {
+  if (await postExists(postId)) return true;
+  throw new AppError(404, "Post not found.");
 }
 
 // Create or change the user's reaction in one atomic operation

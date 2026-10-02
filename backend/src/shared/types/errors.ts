@@ -4,3 +4,8 @@ export interface ExposableHttpError extends Error {
   status: number;
   expose: true;
 }
+
+export interface ErrorBody {
+  message: string;
+  errors?: Record<string, string[]>;   // only on 422 / 409
+}

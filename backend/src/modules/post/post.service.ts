@@ -1,7 +1,8 @@
-import mongoose from "mongoose";
+import mongoose, { Types } from "mongoose";
 import Post from "./post.model.js";
 import type { CreatePostData, PostDocument, UpdatePostData } from "./post.types.js";
 import { deleteReactionsForPost } from "../reaction/reaction.service.js";
+import { AppError } from "../../shared/errors/AppError.js";
 
 
 export function listPosts(): Promise<PostDocument[]> {
@@ -28,4 +29,11 @@ export function updatePost(post: PostDocument, data: UpdatePostData): Promise<Po
 export async function deletePost(post: PostDocument): Promise<void> {
   await post.deleteOne();
   await deleteReactionsForPost(post._id);
+}
+
+export async function getOwnedPost(id: string, userId: Types.ObjectId): Promise<PostDocument> {
+  const post = await findPostById(id);
+  if (!post) throw new AppError(404, "Post not found.");
+  if (!post.user.equals(userId)) throw new AppError(403, "You can only modify your own posts.");
+  return post;
 }

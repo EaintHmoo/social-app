@@ -1,25 +1,23 @@
 import User from "./user.model.js";
 import { AppError } from "../../shared/errors/AppError.js";
 import { startSession } from "./session.service.js";
-import type { AuthResult, DeviceInfo, LoginInput, RegisterInput } from "./auth.types.js";
+import type { AuthResult, DeviceInfo, LoginInput, RegisterInput, UserDocument } from "./auth.types.js";
+import { isDuplicateKeyError } from "../../shared/errors/mongo.js";
+import bcrypt from "bcryptjs";
 
 // Laravel: app/Services/AuthService.php — who the user is (register, check credentials).
 // Session/token mechanics are delegated to session.service.ts.
 
-// Creates the account and signs the new user in on this device.
-export async function register(
-  { name, email, password }: RegisterInput,
-  device: DeviceInfo
-): Promise<AuthResult> {
-  const existing = await User.findOne({ email });
-  if (existing) {
-    // Laravel: this is what the "unique:users" validation rule gives you automatically.
-    throw new AppError(409, "Email already registered.");
+export async function register({ name, email, password }: RegisterInput, device: DeviceInfo) {
+  let user: UserDocument;
+  try {
+    user = await User.create({ name, email, password });
+  } catch (err) {
+    if (isDuplicateKeyError(err)) {
+      throw new AppError(409, "Email already registered.", { email: ["Email already registered."] });
+    }
+    throw err;
   }
-
-  // Laravel: User::create([...]) — password hashing happens via our schema's pre("save") hook,
-  // similar to a model event/mutator in Laravel.
-  const user = await User.create({ name, email, password });
   const tokens = await startSession(user, device);
   return { user, tokens };
 }
@@ -27,14 +25,12 @@ export async function register(
 // Laravel: Auth::attempt(). Each login is its own session, so the phone and the laptop stay
 // signed in side by side.
 export async function login({ email, password }: LoginInput, device: DeviceInfo): Promise<AuthResult> {
-  // password has `select: false` in the schema, so we explicitly ask for it here.
-  const user = await User.findOne({ email }).select("+password");
+  const DUMMY_HASH = await bcrypt.hash("dummy-password-never-matches", 10); // because of unregistered email wanted to show Invalid creditional
 
-  // Same generic error whether the email is unknown or the password is wrong, so the response
-  // doesn't leak which emails are registered — just like Auth::attempt().
-  if (!user || !(await user.comparePassword(password))) {
-    throw new AppError(401, "Invalid credentials.");
-  }
+  const user = await User.findOne({ email }).select("+password");
+  const ok = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
+
+  if (!user || !ok) throw new AppError(401, "Invalid credentials.");
 
   const tokens = await startSession(user, device);
   return { user, tokens };

@@ -1,5 +1,6 @@
 import multer from "multer";
 import type { RequestHandler } from "express";
+import { AppError } from "../errors/AppError.js";
 
 const ALLOWED = ["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"];
 
@@ -13,7 +14,7 @@ export function imageParser(maxFiles = 1) {
     },
     fileFilter: (_req, file, cb) => {
       if (ALLOWED.includes(file.mimetype)) cb(null, true);
-      else cb(new Error("Only JPEG, PNG, WebP, AVIF or GIF images are allowed."));
+      else cb(new AppError(415, "Only JPEG, PNG, WebP, AVIF or GIF images are allowed."));
     },
   });
 }

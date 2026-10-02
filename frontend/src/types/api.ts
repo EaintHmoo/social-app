@@ -64,6 +64,6 @@ export interface SessionsResponse {
  * { email: ["email is required."] }
  */
 export interface ApiErrorBody {
-  error?: string;
+  message?: string;
   errors?: Record<string, string[] | undefined>;
 }

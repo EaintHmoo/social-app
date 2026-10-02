@@ -1,9 +1,9 @@
 import sharp from "sharp";
+import { AppError } from "../errors/AppError.js";
 
-export class InvalidImageError extends Error {
-  readonly status = 422;
+export class InvalidImageError extends AppError {
   constructor(message = "The uploaded file is not a valid image.") {
-    super(message);
+    super(422, message);
     this.name = "InvalidImageError";
   }
 }

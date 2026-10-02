@@ -4,24 +4,11 @@ import { postResource } from "./post.resource.js";
 import type { CreatePostInput, PostDocument, UpdatePostInput } from "./post.types.js";
 import { uploadImage, type ImageUploadOptions } from "../../shared/services/image-upload.service.js";
 import { deleteFile } from "../../shared/services/s3.service.js";
+import { authUser } from "../auth/auth.request.js";
 
 type IdParams = { id: string };
 const POST_IMAGE: ImageUploadOptions = { preset: "post", folder: "posts" };
 
-
-// Finds the post and checks ownership. Sends 404/403 itself and returns undefined on failure.
-async function getOwnedPost(req: Request<IdParams>, res: Response): Promise<PostDocument | undefined> {
-  const post = await postService.findPostById(req.params.id);
-  if (!post) {
-    res.status(404).json({ message: "Post not found." });
-    return;
-  }
-  if (!post.user.equals(req.user!._id)) {
-    res.status(403).json({ message: "You can only modify your own posts." });
-    return;
-  }
-  return post;
-}
 
 export async function index(req: Request, res: Response) {
   const posts = await postService.listPosts();
@@ -45,7 +32,7 @@ export async function store(req: Request<{}, unknown, CreatePostInput>, res: Res
 }
 
 export async function update(req: Request<IdParams, unknown, UpdatePostInput>, res: Response) {
-  const post = await getOwnedPost(req, res);
+  const post = await postService.getOwnedPost(req.params.id, authUser(req)._id);
   if (!post) return;
 
   const { description, seenBy, commentBy, removeImage } = req.body;
@@ -83,7 +70,7 @@ export async function update(req: Request<IdParams, unknown, UpdatePostInput>, r
 
 // Laravel: destroy() — `delete` is a reserved word in JS
 export async function destroy(req: Request<IdParams>, res: Response) {
-  const post = await getOwnedPost(req, res);
+  const post = await postService.getOwnedPost(req.params.id, authUser(req)._id);
   if (!post) return;
 
   const { imageKey } = post;

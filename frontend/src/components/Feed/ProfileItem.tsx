@@ -3,7 +3,7 @@ import Avator from "./Avator"
 
 type ProfileItemProps = {
   ownerName: string
-  id: string
+  id: string | number
 }
 
 const ProfileItem = ({ownerName , id}:ProfileItemProps) => {

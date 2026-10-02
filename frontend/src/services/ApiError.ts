@@ -1,11 +1,6 @@
 import type { ApiErrorBody } from "../types/api";
 
-/**
- * One error type for every failed request, so components never have to poke at a Response.
- *
- * Laravel: this is roughly what you'd catch from a failed Http::post()->throw() — it carries the
- * status, the top-level message, and the per-field validation bag.
- */
+
 export class ApiError extends Error {
   status: number;
   /** Laravel's $errors bag: { email: ["email is required."] }. Empty unless the status is 422. */
@@ -49,7 +44,7 @@ export class ApiError extends Error {
       if (messages?.length) fieldErrors[field] = messages;
     }
 
-    return new ApiError(res.status, body.error ?? fallbackMessage(res.status), fieldErrors);
+    return new ApiError(res.status, body.message ?? fallbackMessage(res.status), fieldErrors);
   }
 }
 
