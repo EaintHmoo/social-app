@@ -22,7 +22,7 @@ export async function store(req: Request<{}, unknown, CreatePostInput>, res: Res
 
   try {
     const post = await postService.createPost({
-      description, seenBy, commentBy, imageKey, user: req.user!._id,
+      description, seenBy, commentBy, imageKey, user: authUser(req)._id,
     });
     res.status(201).json(postResource(post));
   } catch (err) {
