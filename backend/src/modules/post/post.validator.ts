@@ -1,35 +1,31 @@
 import { z } from "zod";
+import { POST_VISIBILITIES } from "./post.types.js";
 
-const imageFile = z.custom<Express.Multer.File>(
-  (v) => typeof v === "object" && v !== null && "buffer" in v,
-  { error: "image must be a file." }
-);
-const seenBy = z.enum(["anyone", "friend_only"], { error: "Choose who can see your post." });
-const commentBy = z.enum(["anyone", "friend_only", "off"], { error: "Choose who can comment your post." });
+// Text-only for now (Phase 1). Images come back in Phase 3 through the media table, at which point
+// "body is required" relaxes to "body or at least one media item".
 
-export const createPostSchema = z
-  .object({
-    description: z.string().trim().optional().transform((v) => v || undefined),
-    image: imageFile.optional(),
-    seenBy,
-    commentBy,
-  })
-  .refine((d) => d.description || d.image, {
-    error: "Either description or image is required.",
-    path: ["description"],
-  });
+// Max matches the CHECK constraint on posts.body, so an over-long post is a 422 here, not a DB error.
+const body = z
+  .string({ error: "body is required." })
+  .trim()
+  .min(1, "body is required.")
+  .max(5000, "body must be at most 5,000 characters.");
 
-// PATCH: every field optional. "" for description means "clear it".
+const visibility = z.enum(POST_VISIBILITIES, {
+  error: `visibility must be one of: ${POST_VISIBILITIES.join(", ")}.`,
+});
+
+export const createPostSchema = z.object({
+  body,
+  visibility: visibility.default("PUBLIC"),
+});
+
+// PATCH: send only what changes, but send something.
 export const updatePostSchema = z
   .object({
-    description: z.string().trim().optional(),
-    image: imageFile.optional(),
-    // multipart sends "true"/"false" strings, JSON sends booleans
-    removeImage: z.union([z.boolean(), z.stringbool()]).optional(),
-    seenBy: seenBy.optional(),
-    commentBy: commentBy.optional(),
+    body: body.optional(),
+    visibility: visibility.optional(),
   })
-  .refine((d) => !(d.image && d.removeImage), {
-    error: "Can't upload and remove an image at the same time.",
-    path: ["removeImage"],
+  .refine((d) => d.body !== undefined || d.visibility !== undefined, {
+    error: "Nothing to update.",
   });

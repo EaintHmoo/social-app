@@ -14,11 +14,12 @@ import type { loginSchema, refreshSchema, registerSchema } from "./auth.validato
 // they can never drift from the actual tables. Re-exported here so the rest of the module keeps
 // importing its types from one place.
 
-export type { RefreshToken, RevokeReason } from "../../generated/prisma/client.js";
+export type { Session, SessionRevokeReason } from "../../generated/prisma/client.js";
 
 // A user as every normal query returns it: the password hash is omitted by default
 // (see shared/config/prisma.ts), and this type says so, so it can't be read by accident.
-export type SafeUser = Omit<User, "password">;
+// Keep the key in sync with the schema: Omit<> silently accepts a key that no longer exists.
+export type SafeUser = Omit<User, "passwordHash">;
 
 // ─── Tokens & sessions ───────────────────────────────────────────────────────
 
@@ -60,8 +61,10 @@ export interface RefreshTokenPayload {
 
 export interface UserResource {
   id: string;
-  name: string;
+  username: string;
+  display_name: string;
   email: string;
+  email_verified: boolean;
 }
 
 export interface SessionResource {

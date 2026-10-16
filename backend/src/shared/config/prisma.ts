@@ -8,6 +8,6 @@ import { requireEnv } from "./env.js";
 export const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: requireEnv("DATABASE_URL") }),
   // Laravel: `protected $hidden = ['password']`, but at the QUERY level: the hash is never even
-  // loaded unless a query opts back in with `omit: { password: false }` (only login does).
-  omit: { user: { password: true } },
+  // loaded unless a query opts back in with `omit: { passwordHash: false }` (only login does).
+  omit: { user: { passwordHash: true } },
 });

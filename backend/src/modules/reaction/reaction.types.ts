@@ -3,7 +3,7 @@ import type { z } from "zod";
 import type { listReactionsQuerySchema, reactSchema } from "./reaction.validator.js";
 
 // Typed against the Prisma enum, so this list and the schema can't drift apart.
-export const REACTION_TYPES = ["like", "love", "funny", "insight", "unlike"] as const satisfies readonly DbReactionType[];
+export const REACTION_TYPES = ["LIKE", "LOVE", "LAUGH", "SAD"] as const satisfies readonly DbReactionType[];
 export type ReactionType = (typeof REACTION_TYPES)[number];
 
 // ─── Database row ────────────────────────────────────────────────────────────
@@ -14,16 +14,18 @@ export type { Reaction };
 
 export interface ReactionUser {
   id: string;
-  name: string;
+  username: string;
+  displayName: string;
 }
 
 // The user is never null: the foreign key cascades, so a deleted user's reactions go with them.
 export type ReactionWithUser = Reaction & { user: ReactionUser };
 
+// What clients receive: snake_case like the auth user resource, not the DB row's camelCase.
 export interface ReactionResource {
-  user: ReactionUser;
+  user: { id: string; username: string; display_name: string };
   type: ReactionType;
-  reactedAt: Date;
+  reacted_at: Date;
 }
 
 export type ReactionSummary = Record<ReactionType, number> & { total: number };

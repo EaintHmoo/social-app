@@ -2,8 +2,8 @@ import type { ReactionResource, ReactionWithUser } from "./reaction.types.js";
 
 export function reactionResource(reaction: ReactionWithUser): ReactionResource {
   return {
-    user: { id: reaction.user.id, name: reaction.user.name },
+    user: { id: reaction.user.id, username: reaction.user.username, display_name: reaction.user.displayName },
     type: reaction.type,
-    reactedAt: reaction.updatedAt,
+    reacted_at: reaction.createdAt,
   };
 }

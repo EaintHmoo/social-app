@@ -1,5 +1,9 @@
 {
   "files": [],
+  // shadcn reads the alias from the root tsconfig; the real compile settings live in tsconfig.app.json.
+  "compilerOptions": {
+    "paths": { "@/*": ["./src/*"] }
+  },
   "references": [
     { "path": "./tsconfig.app.json" },
     { "path": "./tsconfig.node.json" }

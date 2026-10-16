@@ -4,11 +4,14 @@ import { reactionResource } from "./reaction.resource.js";
 import { listReactionsQuerySchema } from "./reaction.validator.js";
 import type { ReactInput } from "./reaction.types.js";
 import { authUser } from "../auth/auth.request.js";
+import { getVisiblePost } from "../post/post.service.js";
 
 type PostParams = { postId: string };
 
+// Every handler starts with getVisiblePost(): a post the user can't see (private, followers-only,
+// blocked, deleted) is a 404 here too — otherwise reacting would reveal that it exists.
 
-// GET /posts/:postId/reactions?type=love&page=1&limit=20
+// GET /posts/:postId/reactions?type=LOVE&page=1&limit=20
 export async function index(req: Request<PostParams>, res: Response) {
   const parsed = listReactionsQuerySchema.safeParse(req.query);
   if (!parsed.success) {
@@ -18,14 +21,12 @@ export async function index(req: Request<PostParams>, res: Response) {
     });
     return;
   }
-  if (!(await reactionService.assertPostExists(req.params.postId))) return;
-
-  const { postId } = req.params;
+  const post = await getVisiblePost(req.params.postId, authUser(req).id);
   const query = parsed.data;
 
   const [summary, { items, total }] = await Promise.all([
-    reactionService.getSummary(postId),
-    reactionService.listReactions(postId, query),
+    reactionService.getSummary(post.id),
+    reactionService.listReactions(post.id, query),
   ]);
 
   res.json({
@@ -35,28 +36,28 @@ export async function index(req: Request<PostParams>, res: Response) {
   });
 }
 
-// PUT /posts/:postId/reactions   { "type": "love" }
+// PUT /posts/:postId/reactions   { "type": "LOVE" }
 export async function react(req: Request<PostParams, unknown, ReactInput>, res: Response) {
-  if (!(await reactionService.assertPostExists(req.params.postId))) return;
+  const userId = authUser(req).id;
+  const post = await getVisiblePost(req.params.postId, userId);
 
-  const { postId } = req.params;
-  await reactionService.react(postId, authUser(req).id, req.body.type);
+  await reactionService.react(post.id, userId, req.body.type);
 
   res.json({
-    myReaction: req.body.type,
-    summary: await reactionService.getSummary(postId),
+    my_reaction: req.body.type,
+    summary: await reactionService.getSummary(post.id),
   });
 }
 
 // DELETE /posts/:postId/reactions
 export async function remove(req: Request<PostParams>, res: Response) {
-  if (!(await reactionService.assertPostExists(req.params.postId))) return;
+  const userId = authUser(req).id;
+  const post = await getVisiblePost(req.params.postId, userId);
 
-  const { postId } = req.params;
-  await reactionService.removeReaction(postId, authUser(req).id);
+  await reactionService.removeReaction(post.id, userId);
 
   res.json({
-    myReaction: null,
-    summary: await reactionService.getSummary(postId),
+    my_reaction: null,
+    summary: await reactionService.getSummary(post.id),
   });
 }

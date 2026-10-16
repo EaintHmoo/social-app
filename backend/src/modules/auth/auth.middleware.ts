@@ -3,6 +3,7 @@ import { verifyAccessToken } from "./jwt.js";
 import { prisma } from "../../shared/config/prisma.js";
 import { isUuid } from "../../shared/errors/prisma.js";
 import { AppError } from "../../shared/errors/AppError.js";
+import { canSignIn } from "./user.policy.js";
 import type { AccessTokenPayload } from "./auth.types.js";
 
 // Laravel: this function IS the `auth:sanctum` / `auth:api` middleware you put
@@ -22,9 +23,13 @@ export default async function auth(req: Request, _res: Response, next: NextFunct
 
   // isUuid: tokens signed before the move to Postgres carry a Mongo ObjectId as `sub`.
   const user = isUuid(payload.sub) ? await prisma.user.findUnique({ where: { id: payload.sub } }) : null;
-  if (!user) throw new AppError(401, "Unauthenticated.");
+  // Suspending or deactivating an account takes effect on the next request, not when its
+  // (up to 15 min) access token happens to expire.
+  if (!user || !canSignIn(user)) throw new AppError(401, "Unauthenticated.");
 
   req.user = user;
-  req.sessionId = payload.sid || null;
+  // sid is a UUID column; anything else (e.g. a token from before sessions existed) would make
+  // Postgres throw on logout, so treat it as "no session".
+  req.sessionId = payload.sid && isUuid(payload.sid) ? payload.sid : null;
   next();
 }

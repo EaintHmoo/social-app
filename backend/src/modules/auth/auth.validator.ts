@@ -15,7 +15,18 @@ const email = required("email")
   .pipe(z.email({ error: "Enter a valid email address." }));
 
 export const registerSchema = z.object({
-  name: required("name").trim().min(1, "name is required.").max(50, "name must be at most 50 characters."),
+  // Appears in profile URLs, so URL-safe characters only. Case is kept as typed; the citext column
+  // makes "Alice" and "alice" collide anyway.
+  username: required("username")
+    .trim()
+    .min(3, "username must be at least 3 characters.")
+    .max(30, "username must be at most 30 characters.")
+    .regex(/^[a-zA-Z0-9_]+$/, "username may only contain letters, numbers and underscores."),
+  // Max matches the VarChar(60) column, so an over-long name is a 422 here, not a DB error.
+  display_name: required("display_name")
+    .trim()
+    .min(1, "display_name is required.")
+    .max(60, "display_name must be at most 60 characters."),
   email,
   password: required("password")
     .min(8, "password must be at least 8 characters.")

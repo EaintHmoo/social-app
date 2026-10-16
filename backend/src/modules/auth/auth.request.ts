@@ -11,7 +11,8 @@ import type { DeviceInfo, SafeUser } from "./auth.types.js";
 // only set that when you really are behind a proxy you control, since it makes Express believe
 // the X-Forwarded-For header, which any client can forge.
 export function deviceInfo(req: Request): DeviceInfo {
-  return { userAgent: req.get("user-agent") || null, ip: req.ip || null };
+  // Truncated to fit the VarChar(512) column; an over-long header would otherwise fail the INSERT.
+  return { userAgent: req.get("user-agent")?.slice(0, 512) || null, ip: req.ip || null };
 }
 
 // Laravel: `$request->user()` on a route behind `auth:sanctum`. The auth middleware sets req.user,

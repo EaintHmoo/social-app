@@ -1,11 +1,27 @@
 // Laravel: this one file replaces database/migrations/* as the source of truth for the schema.
 // You edit models here, then `npm run db:migrate` diffs it against the DB and writes a SQL
 // migration into prisma/migrations (which IS committed, like Laravel's migration files).
+//
+// Things Prisma can't express live as hand-written SQL in the migrations, and Prisma's diff
+// ignores them (so it never tries to drop them):
+//   - CHECK constraints (e.g. "you can't follow yourself", max body lengths)
+//   - posts.search_vector as a GENERATED column
+//   - the append-only trigger on audit_logs
+// Grep the migrations for "CHECK" / "GENERATED" / "TRIGGER" to find them.
+//
+// onDelete rules follow one principle. Users are soft-deleted (deletedAt), so a hard delete is rare
+// and deliberate:
+//   - Cascade  for rows that only describe a relationship (follows, reactions, memberships).
+//   - Restrict for history (posts, comments, messages, meetings, reports, audit logs): a hard
+//              delete fails loudly instead of silently wiping it.
+//   - SetNull  for optional pointers (an avatar, "replying to", "admitted by").
 
 generator client {
-  provider     = "prisma-client"
-  output       = "../src/generated/prisma"
-  moduleFormat = "esm"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "esm"
+  // Lets @@index/@@unique take `where: raw("...")` — used for the unread-notification indexes.
+  previewFeatures = ["partialIndexes"]
 }
 
 // The connection URL lives in prisma.config.ts (Prisma 7 no longer reads it from here).
@@ -15,112 +31,752 @@ datasource db {
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
-model User {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  email     String   @unique // stored lowercased — auth.validator.ts normalises it
-  password  String // bcrypt hash; hidden from every query by default, see shared/config/prisma.ts
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+enum UserRole {
+  user
+  admin
+}
 
-  refreshTokens RefreshToken[]
-  posts         Post[]
-  reactions     Reaction[]
+enum UserStatus {
+  active
+  suspended
+  deactivated
+}
+
+model User {
+  id                String     @id @default(uuid(7)) @db.Uuid
+  // citext = case-insensitive, so the DB enforces uniqueness even if a code path skips the validator
+  email             String     @unique @db.Citext
+  emailVerifiedAt   DateTime?  @map("email_verified_at") @db.Timestamptz(3)
+  username          String     @unique @db.Citext
+  // @map keeps the existing column name, so this rename needs no data migration
+  displayName       String     @map("name") @db.VarChar(60)
+  // bcrypt hash; hidden from every query by default (see shared/config/prisma.ts)
+  passwordHash      String     @map("password")
+  passwordChangedAt DateTime?  @map("password_changed_at") @db.Timestamptz(3)
+  role              UserRole   @default(user)
+  status            UserStatus @default(active)
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt         DateTime?  @map("deleted_at") @db.Timestamptz(3)
+
+  // Both nullable: media rows need an owner, so the user exists before their avatar is uploaded.
+  // That breaks the users <-> media cycle (users.avatar_media_id -> media.owner_id -> users).
+  avatarMediaId String? @map("avatar_media_id") @db.Uuid
+  coverMediaId  String? @map("cover_media_id") @db.Uuid
+
+  avatarMedia Media? @relation("UserAvatar", fields: [avatarMediaId], references: [id], onDelete: SetNull)
+  coverMedia  Media? @relation("UserCover", fields: [coverMediaId], references: [id], onDelete: SetNull)
+
+  sessions           Session[]
+  verificationTokens VerificationToken[]
+
+  // Social graph — two relations to the same table need names to tell them apart.
+  following Follow[] @relation("FollowFollower") // people I follow
+  followers Follow[] @relation("FollowFollowee") // people who follow me
+  blocking  Block[]  @relation("BlockBlocker")
+  blockedBy Block[]  @relation("BlockBlocked")
+
+  // Content
+  posts     Post[]
+  media     Media[]    @relation("MediaOwner")
+  comments  Comment[]
+  reactions Reaction[]
+
+  // Chat
+  conversationsCreated Conversation[]       @relation("ConversationCreator")
+  memberships          ConversationMember[]
+  messagesSent         Message[]
+  messageReactions     MessageReaction[]
+
+  // Notifications
+  notifications        Notification[]        @relation("NotificationRecipient")
+  notificationsActed   Notification[]        @relation("NotificationActor")
+  notificationSettings NotificationSetting[]
+
+  // Meetings
+  meetingsHosted        Meeting[]            @relation("MeetingHost")
+  meetingInvites        MeetingInvite[]      @relation("MeetingInvitee")
+  meetingInvitesSent    MeetingInvite[]      @relation("MeetingInviter")
+  meetingParticipations MeetingParticipant[] @relation("ParticipantUser")
+  participantsAdmitted  MeetingParticipant[] @relation("ParticipantAdmittedBy")
+  recordingsStarted     Recording[]
+
+  // Moderation & audit
+  reportsFiled    Report[]   @relation("ReportReporter")
+  reportsReviewed Report[]   @relation("ReportReviewer")
+  auditLogs       AuditLog[]
 
   @@map("users")
 }
 
-enum RevokeReason {
-  rotated
+// A session = one login on one device. It owns a chain of refresh tokens: every /auth/refresh
+// marks the current token used and adds the next one. Revoking happens at the SESSION level, so
+// "log this device out" is one row update, however many tokens it has burned through.
+
+enum SessionRevokeReason {
   logout
   logout_all
-  reuse
-  expired
+  reuse // a used refresh token came back, so the session is treated as stolen
+  password_changed
+  admin_revoked
 }
 
-// One row per issued refresh token. A SESSION (sessionId) = one login on one device and owns a
-// chain of tokens; every /auth/refresh revokes the current token and adds the next one.
+/// One row per login on one device. Laravel equivalent: the `sessions` table.
+model Session {
+  id                String               @id @default(uuid(7)) @db.Uuid
+  userId            String               @map("user_id") @db.Uuid
+  // Hard cap no matter how often tokens rotate (replaces sessionStartedAt).
+  absoluteExpiresAt DateTime             @map("absolute_expires_at") @db.Timestamptz(3)
+  lastUsedAt        DateTime             @default(now()) @map("last_used_at") @db.Timestamptz(3)
+  // Captured at login and never relabelled, so the device list stays stable.
+  userAgent         String?              @map("user_agent") @db.VarChar(512)
+  ip                String?              @db.Inet
+  revokedAt         DateTime?            @map("revoked_at") @db.Timestamptz(3)
+  revokedReason     SessionRevokeReason? @map("revoked_reason")
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([userId, revokedAt]) // active devices list, log out all
+  @@map("sessions")
+}
+
+/// One row per issued refresh token. Rotation = mark this one used, insert the next.
 model RefreshToken {
-  id               String        @id @default(uuid()) @db.Uuid
-  userId           String        @map("user_id") @db.Uuid
-  sessionId        String        @map("session_id")
+  id        String    @id @default(uuid(7)) @db.Uuid
+  sessionId String    @map("session_id") @db.Uuid
   // SHA-256 of the raw token, never the token itself (see session.service.ts for why not bcrypt).
-  tokenHash        String        @unique @map("token_hash")
-  // The original login time, copied unchanged through rotation — caps the session's lifetime.
-  sessionStartedAt DateTime      @map("session_started_at")
-  expiresAt        DateTime      @map("expires_at")
-  // Kept rather than deleted, so a replayed token is recognised as "used" not "never existed".
-  revokedAt        DateTime?     @map("revoked_at")
-  revokedReason    RevokeReason? @map("revoked_reason")
-  userAgent        String?       @map("user_agent")
-  ip               String?
-  createdAt        DateTime      @default(now()) @map("created_at")
-  updatedAt        DateTime      @updatedAt @map("updated_at")
+  tokenHash String    @unique @map("token_hash")
+  // Idle expiry for this token (e.g. 7 days); session.absoluteExpiresAt is the hard cap.
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  // Set when rotated. If a token with usedAt != null is presented again, that's reuse.
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  // Deleting a user deletes their tokens (Laravel: ->cascadeOnDelete()).
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Deleting a session (or its user, which cascades to sessions) deletes its tokens.
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
   @@index([sessionId])
-  @@index([expiresAt])
+  @@index([expiresAt]) // cleanup job
   @@map("refresh_tokens")
 }
 
-// ─── Posts & reactions ───────────────────────────────────────────────────────
-
-enum SeenBy {
-  anyone
-  friend_only
+enum VerificationType {
+  email_verify
+  password_reset
+  email_change
 }
 
-enum CommentBy {
-  anyone
-  friend_only
-  off
+/// One-time links. Laravel equivalent: `password_reset_tokens`, generalised.
+model VerificationToken {
+  id        String           @id @default(uuid(7)) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  type      VerificationType
+  tokenHash String           @unique @map("token_hash")
+  // Only for email_change: the address waiting to be confirmed.
+  newEmail  String?          @map("new_email") @db.Citext
+  expiresAt DateTime         @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime?        @map("used_at") @db.Timestamptz(3)
+  ip        String?          @db.Inet
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, usedAt]) // "invalidate previous unused links of this type"
+  @@map("verification_tokens")
+}
+
+// ─── Social graph ────────────────────────────────────────────────────────────
+
+enum FollowStatus {
+  ACTIVE
+  PENDING // waiting for a private account to approve
+}
+
+model Follow {
+  followerId String       @map("follower_id") @db.Uuid
+  followeeId String       @map("followee_id") @db.Uuid
+  status     FollowStatus @default(ACTIVE)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  acceptedAt DateTime?    @map("accepted_at") @db.Timestamptz(3)
+
+  follower User @relation("FollowFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  followee User @relation("FollowFollowee", fields: [followeeId], references: [id], onDelete: Cascade)
+
+  // Composite PK = one follow per pair. CHECK (follower_id <> followee_id) is in the migration.
+  @@id([followerId, followeeId])
+  @@index([followeeId, status]) // my followers / my pending follow requests
+  @@map("follows")
+}
+
+model Block {
+  blockerId String   @map("blocker_id") @db.Uuid
+  blockedId String   @map("blocked_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  blocker User @relation("BlockBlocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("BlockBlocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  // The PK covers "did I block them?"; the index covers "did they block me?".
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+  @@map("blocks")
+}
+
+// ─── Content ─────────────────────────────────────────────────────────────────
+
+enum PostVisibility {
+  PUBLIC
+  FOLLOWERS
+  PRIVATE
 }
 
 model Post {
-  id          String    @id @default(uuid()) @db.Uuid
-  userId      String    @map("user_id") @db.Uuid
-  // At least one of these two is required — enforced by a CHECK constraint in the migration SQL.
-  description String?
-  imageKey    String?   @map("image_key") // S3 object key, needed to delete the file later
-  seenBy      SeenBy    @default(anyone) @map("seen_by")
-  commentBy   CommentBy @default(anyone) @map("comment_by")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  id           String                   @id @default(uuid(7)) @db.Uuid
+  authorId     String                   @map("author_id") @db.Uuid
+  // Nullable: a post can be images only. Max 5,000 chars is a CHECK in the migration.
+  body         String?
+  visibility   PostVisibility           @default(PUBLIC)
+  // "Share recording as a post".
+  recordingId  String?                  @map("recording_id") @db.Uuid
+  // Denormalised counters, updated in the same transaction as the reaction/comment write.
+  likeCount    Int                      @default(0) @map("like_count")
+  commentCount Int                      @default(0) @map("comment_count")
+  // GENERATED ALWAYS AS (...) STORED — created in the migration SQL. Prisma reads a generated
+  // column as a "default", so this dbgenerated() must match Postgres' text of the expression
+  // exactly, or `migrate dev` reports drift. Prisma can't read or write tsvector, so search
+  // queries use $queryRaw (parameterised, never $queryRawUnsafe).
+  searchVector Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, COALESCE(body, ''::text))")) @map("search_vector")
+  editedAt     DateTime?                @map("edited_at") @db.Timestamptz(3)
+  createdAt    DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime?                @map("deleted_at") @db.Timestamptz(3)
 
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  author    User          @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  recording Recording?    @relation(fields: [recordingId], references: [id], onDelete: SetNull)
+  media     Media[]
+  comments  Comment[]
   reactions Reaction[]
+  hashtags  PostHashtag[]
 
-  @@index([userId, createdAt(sort: Desc)])
-  @@index([createdAt(sort: Desc)])
+  // id is the tie-breaker, so cursor pagination is stable when two posts share a createdAt.
+  @@index([authorId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([searchVector], type: Gin)
   @@map("posts")
 }
 
+enum MediaKind {
+  IMAGE
+  VIDEO
+  FILE
+}
+
+enum MediaStatus {
+  PENDING // presigned, waiting for the browser to upload
+  PROCESSING // uploaded, worker is verifying/resizing
+  READY
+  FAILED
+}
+
+// One table for post images, chat attachments, avatars and covers: one upload pipeline for all.
+model Media {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  ownerId     String      @map("owner_id") @db.Uuid
+  kind        MediaKind
+  status      MediaStatus @default(PENDING)
+  // uploads/<ownerId>/<id> — the private quarantine key the browser uploads to.
+  rawKey      String      @unique @map("raw_key")
+  // e.g. { "thumb": "media/.../thumb.webp", "medium": "...", "large": "..." }, set by the worker.
+  variants    Json?
+  mime        String      @db.VarChar(100)
+  sizeBytes   BigInt      @map("size_bytes")
+  width       Int?
+  height      Int?
+  durationSec Int?        @map("duration_sec")
+  altText     String?     @map("alt_text") @db.VarChar(500)
+  // At most one of these is set — CHECK in the migration. Neither = avatar/cover/unattached.
+  postId      String?     @map("post_id") @db.Uuid
+  messageId   String?     @map("message_id") @db.Uuid
+  position    Int         @default(0) @db.SmallInt // order of images within a post
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  processedAt DateTime?   @map("processed_at") @db.Timestamptz(3)
+
+  owner   User     @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  post    Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+  message Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  usersAsAvatar       User[]         @relation("UserAvatar")
+  usersAsCover        User[]         @relation("UserCover")
+  conversationAvatars Conversation[]
+
+  @@index([postId, position])
+  @@index([messageId])
+  @@index([status, createdAt]) // cleanup job for uploads stuck in PENDING/PROCESSING
+  @@map("media")
+}
+
+model Comment {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  postId     String    @map("post_id") @db.Uuid
+  authorId   String    @map("author_id") @db.Uuid
+  // Replies go one level deep only; the service enforces that (a reply's parent has no parent).
+  parentId   String?   @map("parent_id") @db.Uuid
+  body       String // max 2,000 chars — CHECK in the migration
+  replyCount Int       @default(0) @map("reply_count")
+  editedAt   DateTime? @map("edited_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  post    Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author  User      @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  parent  Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies Comment[] @relation("CommentReplies")
+
+  @@index([postId, createdAt])
+  @@index([parentId, createdAt])
+  @@map("comments")
+}
+
 enum ReactionType {
-  like
-  love
-  funny
-  insight
-  unlike
+  LIKE
+  LOVE
+  LAUGH
+  SAD
 }
 
 model Reaction {
-  id        String       @id @default(uuid()) @db.Uuid
   postId    String       @map("post_id") @db.Uuid
   userId    String       @map("user_id") @db.Uuid
   type      ReactionType
-  createdAt DateTime     @default(now()) @map("created_at")
-  updatedAt DateTime     @updatedAt @map("updated_at")
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  // Deleting a post removes its reactions in the same statement — no cleanup code needed.
   post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // One reaction per user per post; also what makes the upsert in reaction.service.ts safe.
-  @@unique([postId, userId])
-  // "Who reacted" listing, newest first
-  @@index([postId, updatedAt(sort: Desc)])
+  // Composite PK = one reaction per user per post; also what makes an upsert safe.
+  @@id([postId, userId])
+  @@index([userId, createdAt(sort: Desc)]) // "posts I liked"
   @@map("reactions")
+}
+
+model Hashtag {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  tag       String   @unique @db.Citext // stored without the #; citext so #NodeJS = #nodejs
+  postCount Int      @default(0) @map("post_count")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  posts PostHashtag[]
+
+  @@map("hashtags")
+}
+
+model PostHashtag {
+  postId    String @map("post_id") @db.Uuid
+  hashtagId String @map("hashtag_id") @db.Uuid
+
+  post    Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  hashtag Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, hashtagId])
+  @@index([hashtagId, postId]) // "posts with #tag"
+  @@map("post_hashtags")
+}
+
+// ─── Chat ────────────────────────────────────────────────────────────────────
+
+enum ConversationType {
+  DIRECT
+  GROUP
+  MEETING // the in-meeting chat; reuses messages, reactions and pagination for free
+}
+
+enum ConversationRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model Conversation {
+  id            String           @id @default(uuid(7)) @db.Uuid
+  type          ConversationType
+  title         String?          @db.VarChar(100) // groups only
+  avatarMediaId String?          @map("avatar_media_id") @db.Uuid
+  createdById   String           @map("created_by_id") @db.Uuid
+  // DIRECT only: the two user ids sorted and joined "<idA>:<idB>". The unique index makes a
+  // second DM between the same pair impossible, even if two requests race.
+  directKey     String?          @unique @map("direct_key")
+  // Denormalised pointer, no FK: messages already reference conversations, and a FK back would
+  // make the two tables depend on each other.
+  lastMessageId String?          @map("last_message_id") @db.Uuid
+  lastMessageAt DateTime         @default(now()) @map("last_message_at") @db.Timestamptz(3) // sorts the inbox
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  avatarMedia Media? @relation(fields: [avatarMediaId], references: [id], onDelete: SetNull)
+  createdBy   User   @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  members         ConversationMember[]
+  messages        Message[]
+  meetingChat     Meeting?             @relation("MeetingChat")
+  meetingsStarted Meeting[]            @relation("MeetingSource")
+
+  @@map("conversations")
+}
+
+model ConversationMember {
+  conversationId    String           @map("conversation_id") @db.Uuid
+  userId            String           @map("user_id") @db.Uuid
+  role              ConversationRole @default(MEMBER)
+  // No FK, same reason as lastMessageId. Read receipts + unread count = messages after this one.
+  lastReadMessageId String?          @map("last_read_message_id") @db.Uuid
+  lastReadAt        DateTime?        @map("last_read_at") @db.Timestamptz(3)
+  mutedUntil        DateTime?        @map("muted_until") @db.Timestamptz(3)
+  joinedAt          DateTime         @default(now()) @map("joined_at") @db.Timestamptz(3)
+  leftAt            DateTime?        @map("left_at") @db.Timestamptz(3) // kept, not deleted, so history still shows who was there
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId, leftAt]) // "my conversations" (leftAt IS NULL)
+  @@map("conversation_members")
+}
+
+enum MessageType {
+  TEXT
+  MEDIA
+  SYSTEM // "Alice added Bob" — no sender
+  MEETING_INVITE // the "Start call" card
+}
+
+model Message {
+  id              String      @id @default(uuid(7)) @db.Uuid
+  conversationId  String      @map("conversation_id") @db.Uuid
+  senderId        String?     @map("sender_id") @db.Uuid // null for SYSTEM messages
+  // Generated by the client; a retried send hits the unique index instead of duplicating.
+  clientMessageId String?     @map("client_message_id") @db.Uuid
+  type            MessageType @default(TEXT)
+  body            String? // max 4,000 chars — CHECK in the migration
+  meetingId       String?     @map("meeting_id") @db.Uuid
+  replyToId       String?     @map("reply_to_id") @db.Uuid
+  editedAt        DateTime?   @map("edited_at") @db.Timestamptz(3)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  deletedAt       DateTime?   @map("deleted_at") @db.Timestamptz(3)
+
+  conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User?             @relation(fields: [senderId], references: [id], onDelete: Restrict)
+  meeting      Meeting?          @relation(fields: [meetingId], references: [id], onDelete: SetNull)
+  replyTo      Message?          @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies      Message[]         @relation("MessageReplies")
+  media        Media[]
+  reactions    MessageReaction[]
+
+  @@unique([senderId, clientMessageId])
+  @@index([conversationId, createdAt(sort: Desc), id(sort: Desc)]) // history pagination
+  @@map("messages")
+}
+
+model MessageReaction {
+  messageId String   @map("message_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  emoji     String   @db.VarChar(16)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // emoji is part of the key: one user can add several different emoji to the same message.
+  @@id([messageId, userId, emoji])
+  @@map("message_reactions")
+}
+
+// ─── Notifications ───────────────────────────────────────────────────────────
+
+enum NotificationType {
+  FOLLOW
+  FOLLOW_REQUEST
+  LIKE
+  COMMENT
+  MENTION
+  MESSAGE
+  MEETING_INVITE
+  MEETING_STARTING
+  RECORDING_READY
+}
+
+model Notification {
+  id         String           @id @default(uuid(7)) @db.Uuid
+  userId     String           @map("user_id") @db.Uuid // who receives it
+  type       NotificationType
+  actorId    String?          @map("actor_id") @db.Uuid // the most recent person who acted
+  actorCount Int              @default(1) @map("actor_count") // "A and 12 others"
+  // Polymorphic (Laravel: morphTo): it can point at a post, comment, meeting... so Postgres
+  // can't enforce a FK. Code cleans up notifications when their target is deleted.
+  entityType String           @map("entity_type") @db.VarChar(30)
+  entityId   String           @map("entity_id") @db.Uuid
+  groupKey   String           @map("group_key") // e.g. LIKE:post:<id>
+  data       Json             @default("{}") // small display snapshot, e.g. a post preview
+  readAt     DateTime?        @map("read_at") @db.Timestamptz(3)
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user  User  @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actor User? @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  // At most one UNREAD row per group: a new like bumps actorCount on it instead of inserting.
+  // Once read, the next like starts a fresh row.
+  @@unique([userId, groupKey], map: "notifications_user_id_group_key_unread_key", where: raw("read_at IS NULL"))
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId], map: "notifications_user_id_unread_idx", where: raw("read_at IS NULL")) // unread badge
+  @@map("notifications")
+}
+
+// Only what the user changed is stored; a missing row means "use the defaults in code".
+model NotificationSetting {
+  userId String           @map("user_id") @db.Uuid
+  type   NotificationType
+  inApp  Boolean          @map("in_app")
+  email  Boolean
+  push   Boolean
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, type])
+  @@map("notification_settings")
+}
+
+// ─── Meetings ────────────────────────────────────────────────────────────────
+
+enum MeetingType {
+  INSTANT
+  SCHEDULED
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  LIVE
+  ENDED
+  CANCELLED
+}
+
+enum MeetingAccess {
+  INVITE_ONLY
+  ANYONE_WITH_LINK
+}
+
+model Meeting {
+  id                   String        @id @default(uuid(7)) @db.Uuid
+  slug                 String        @unique @db.VarChar(16) // random, non-guessable: /m/<slug>
+  hostId               String        @map("host_id") @db.Uuid
+  title                String        @db.VarChar(150)
+  description          String?
+  type                 MeetingType
+  status               MeetingStatus
+  access               MeetingAccess @default(INVITE_ONLY)
+  scheduledStartAt     DateTime?     @map("scheduled_start_at") @db.Timestamptz(3)
+  durationMin          Int?          @map("duration_min")
+  startedAt            DateTime?     @map("started_at") @db.Timestamptz(3)
+  endedAt              DateTime?     @map("ended_at") @db.Timestamptz(3)
+  passwordHash         String?       @map("password_hash") // argon2
+  isLocked             Boolean       @default(false) @map("is_locked")
+  // { waitingRoom, muteOnEntry, allowScreenShare, allowGuests } — defaults applied in code.
+  settings             Json          @default("{}")
+  // Set to the meeting id, not the slug: the slug is shared publicly, the room name shouldn't be.
+  livekitRoomName      String        @unique @map("livekit_room_name")
+  chatConversationId   String        @unique @map("chat_conversation_id") @db.Uuid
+  sourceConversationId String?       @map("source_conversation_id") @db.Uuid // chat the call started from
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  host               User          @relation("MeetingHost", fields: [hostId], references: [id], onDelete: Restrict)
+  chatConversation   Conversation  @relation("MeetingChat", fields: [chatConversationId], references: [id], onDelete: Restrict)
+  sourceConversation Conversation? @relation("MeetingSource", fields: [sourceConversationId], references: [id], onDelete: SetNull)
+
+  invites        MeetingInvite[]
+  participants   MeetingParticipant[]
+  recordings     Recording[]
+  inviteMessages Message[]
+
+  @@index([hostId, scheduledStartAt])
+  // Only SCHEDULED meetings, which is all the "starting soon" reminder job ever looks at.
+  @@index([scheduledStartAt], map: "meetings_scheduled_start_at_upcoming_idx", where: raw("status = 'SCHEDULED'"))
+  @@map("meetings")
+}
+
+enum MeetingInviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+model MeetingInvite {
+  id          String              @id @default(uuid(7)) @db.Uuid
+  meetingId   String              @map("meeting_id") @db.Uuid
+  inviteeId   String              @map("invitee_id") @db.Uuid
+  invitedById String              @map("invited_by_id") @db.Uuid
+  status      MeetingInviteStatus @default(PENDING)
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  respondedAt DateTime?           @map("responded_at") @db.Timestamptz(3)
+
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  invitee   User    @relation("MeetingInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+  invitedBy User    @relation("MeetingInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@unique([meetingId, inviteeId])
+  @@index([inviteeId, status]) // "my upcoming meetings"
+  @@map("meeting_invites")
+}
+
+enum ParticipantRole {
+  HOST
+  CO_HOST
+  PARTICIPANT
+}
+
+enum ParticipantStatus {
+  WAITING
+  ADMITTED
+  DENIED
+  LEFT
+  REMOVED
+}
+
+// One row per JOIN, not per person: a drop-and-rejoin gets a new row, so the attendance report
+// shows every reconnect.
+model MeetingParticipant {
+  id              String            @id @default(uuid(7)) @db.Uuid
+  meetingId       String            @map("meeting_id") @db.Uuid
+  userId          String?           @map("user_id") @db.Uuid // null for guests
+  guestName       String?           @map("guest_name") @db.VarChar(60)
+  livekitIdentity String            @map("livekit_identity") // matches webhook events to this row
+  role            ParticipantRole   @default(PARTICIPANT)
+  status          ParticipantStatus @default(WAITING)
+  admittedById    String?           @map("admitted_by_id") @db.Uuid
+  requestedAt     DateTime          @default(now()) @map("requested_at") @db.Timestamptz(3)
+  joinedAt        DateTime?         @map("joined_at") @db.Timestamptz(3)
+  leftAt          DateTime?         @map("left_at") @db.Timestamptz(3)
+  durationSec     Int?              @map("duration_sec") // calculated when they leave
+
+  meeting    Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user       User?   @relation("ParticipantUser", fields: [userId], references: [id], onDelete: Restrict)
+  admittedBy User?   @relation("ParticipantAdmittedBy", fields: [admittedById], references: [id], onDelete: SetNull)
+
+  @@index([meetingId, status]) // waiting room + live list
+  @@index([userId, joinedAt(sort: Desc)]) // "my meeting history"
+  @@map("meeting_participants")
+}
+
+enum RecordingStatus {
+  STARTING
+  ACTIVE
+  PROCESSING
+  READY
+  FAILED
+}
+
+model Recording {
+  id          String          @id @default(uuid(7)) @db.Uuid
+  meetingId   String          @map("meeting_id") @db.Uuid
+  startedById String          @map("started_by_id") @db.Uuid
+  egressId    String          @unique @map("egress_id") // LiveKit's id, used to match webhooks
+  status      RecordingStatus @default(STARTING)
+  storageKey  String?         @map("storage_key") // private S3 key
+  durationSec Int?            @map("duration_sec")
+  sizeBytes   BigInt?         @map("size_bytes")
+  error       String?
+  startedAt   DateTime?       @map("started_at") @db.Timestamptz(3)
+  endedAt     DateTime?       @map("ended_at") @db.Timestamptz(3)
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // Restrict: deleting a meeting must not silently orphan recording files in S3.
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Restrict)
+  startedBy User    @relation(fields: [startedById], references: [id], onDelete: Restrict)
+  posts     Post[]
+
+  @@index([meetingId])
+  @@map("recordings")
+}
+
+// LiveKit retries webhooks. The handler inserts the event id here first; if it's already there,
+// the event was handled before and is skipped. Laravel: the idempotency check on a payment callback.
+model WebhookEvent {
+  id          String    @id // LiveKit's event id
+  source      String    @db.VarChar(30) // "livekit"
+  type        String    @db.VarChar(50)
+  payload     Json
+  receivedAt  DateTime  @default(now()) @map("received_at") @db.Timestamptz(3)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(3)
+
+  @@map("webhook_events")
+}
+
+// ─── Moderation & audit ──────────────────────────────────────────────────────
+
+enum ReportTargetType {
+  POST
+  COMMENT
+  USER
+  MESSAGE
+  MEETING
+}
+
+enum ReportReason {
+  SPAM
+  HARASSMENT
+  HATE
+  NUDITY
+  VIOLENCE
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  ACTIONED
+  DISMISSED
+}
+
+model Report {
+  id             String           @id @default(uuid(7)) @db.Uuid
+  reporterId     String           @map("reporter_id") @db.Uuid
+  targetType     ReportTargetType @map("target_type")
+  targetId       String           @map("target_id") @db.Uuid // polymorphic, no FK (see Notification)
+  reason         ReportReason
+  details        String?          @db.VarChar(1000)
+  status         ReportStatus     @default(OPEN)
+  reviewedById   String?          @map("reviewed_by_id") @db.Uuid
+  resolutionNote String?          @map("resolution_note")
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  reviewedAt     DateTime?        @map("reviewed_at") @db.Timestamptz(3)
+
+  reporter   User  @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  reviewedBy User? @relation("ReportReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@unique([reporterId, targetType, targetId]) // one report per person per thing
+  @@index([status, createdAt]) // admin queue
+  @@map("reports")
+}
+
+// Append-only. A trigger in the migration rejects UPDATE and DELETE, so even the app can't edit
+// history. Never put passwords, tokens or OTPs in metadata.
+model AuditLog {
+  // bigint sequence: logs are read in insertion order, and a sequence is cheaper than a uuid.
+  id         BigInt   @id @default(autoincrement())
+  actorId    String?  @map("actor_id") @db.Uuid // null for system actions
+  action     String   @db.VarChar(60) // auth.login, auth.password_changed, admin.user_suspended...
+  targetType String?  @map("target_type") @db.VarChar(30)
+  targetId   String?  @map("target_id") @db.Uuid
+  ipAddress  String?  @map("ip_address") @db.Inet
+  userAgent  String?  @map("user_agent")
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // Restrict, not SetNull: SetNull is an UPDATE, which the append-only trigger would reject anyway.
+  actor User? @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
 }

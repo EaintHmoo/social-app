@@ -2,6 +2,13 @@ FROM node:22-slim
 
 WORKDIR /app
 
+# The Prisma CLI's migration engine (migrate, status, studio) is a native binary that links against
+# OpenSSL, which the slim image leaves out. Without it Prisma guesses a version and warns on every
+# command. --no-install-recommends + clearing the apt lists keeps the layer small.
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
+
 # Laravel: this is composer.json/composer.lock copied before the rest of the code.
 # Dependencies change rarely, so Docker can reuse this layer's cache on most rebuilds.
 # The Prisma schema comes along too: `npm ci` runs the postinstall script, which generates the

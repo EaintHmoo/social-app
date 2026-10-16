@@ -47,7 +47,7 @@ export async function refresh(req: Request<{}, unknown, RefreshInput>, res: Resp
 // which is fine since it's short-lived.
 export async function logout(req: Request, res: Response) {
   if (req.sessionId) {
-    await sessionService.revokeSession(req.sessionId);
+    await sessionService.revokeSession(authUser(req).id, req.sessionId);
   }
   res.json({ message: "Logged out." });
 }
