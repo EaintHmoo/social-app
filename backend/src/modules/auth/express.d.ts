@@ -1,4 +1,4 @@
-import type { UserDocument } from "./auth.types.ts";
+import type { SafeUser } from "./auth.types.ts";
 
 // Laravel: `$request->user()` — the fields the auth middleware attaches to the request.
 // It lives in the auth module because auth is what puts these there; `declare global` applies
@@ -7,7 +7,7 @@ import type { UserDocument } from "./auth.types.ts";
 declare global {
   namespace Express {
     interface Request {
-      user?: UserDocument;
+      user?: SafeUser;
       sessionId?: string | null;
     }
   }

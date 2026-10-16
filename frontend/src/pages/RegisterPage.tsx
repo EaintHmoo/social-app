@@ -31,7 +31,7 @@ export function RegisterPage() {
       // register logs the new user straight in — backend/src/services/authService.ts starts a
       // session and returns tokens with the 201, so there is no second login step.
       await signUp(form);
-      navigate("/tasks", { replace: true });
+      navigate("/home", { replace: true });
     } catch (err) {
       setError(err as Error);
       setSubmitting(false);

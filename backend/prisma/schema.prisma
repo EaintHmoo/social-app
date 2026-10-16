@@ -1,0 +1,126 @@
+// Laravel: this one file replaces database/migrations/* as the source of truth for the schema.
+// You edit models here, then `npm run db:migrate` diffs it against the DB and writes a SQL
+// migration into prisma/migrations (which IS committed, like Laravel's migration files).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+// The connection URL lives in prisma.config.ts (Prisma 7 no longer reads it from here).
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  email     String   @unique // stored lowercased — auth.validator.ts normalises it
+  password  String // bcrypt hash; hidden from every query by default, see shared/config/prisma.ts
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  refreshTokens RefreshToken[]
+  posts         Post[]
+  reactions     Reaction[]
+
+  @@map("users")
+}
+
+enum RevokeReason {
+  rotated
+  logout
+  logout_all
+  reuse
+  expired
+}
+
+// One row per issued refresh token. A SESSION (sessionId) = one login on one device and owns a
+// chain of tokens; every /auth/refresh revokes the current token and adds the next one.
+model RefreshToken {
+  id               String        @id @default(uuid()) @db.Uuid
+  userId           String        @map("user_id") @db.Uuid
+  sessionId        String        @map("session_id")
+  // SHA-256 of the raw token, never the token itself (see session.service.ts for why not bcrypt).
+  tokenHash        String        @unique @map("token_hash")
+  // The original login time, copied unchanged through rotation — caps the session's lifetime.
+  sessionStartedAt DateTime      @map("session_started_at")
+  expiresAt        DateTime      @map("expires_at")
+  // Kept rather than deleted, so a replayed token is recognised as "used" not "never existed".
+  revokedAt        DateTime?     @map("revoked_at")
+  revokedReason    RevokeReason? @map("revoked_reason")
+  userAgent        String?       @map("user_agent")
+  ip               String?
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  // Deleting a user deletes their tokens (Laravel: ->cascadeOnDelete()).
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ─── Posts & reactions ───────────────────────────────────────────────────────
+
+enum SeenBy {
+  anyone
+  friend_only
+}
+
+enum CommentBy {
+  anyone
+  friend_only
+  off
+}
+
+model Post {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  // At least one of these two is required — enforced by a CHECK constraint in the migration SQL.
+  description String?
+  imageKey    String?   @map("image_key") // S3 object key, needed to delete the file later
+  seenBy      SeenBy    @default(anyone) @map("seen_by")
+  commentBy   CommentBy @default(anyone) @map("comment_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reactions Reaction[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("posts")
+}
+
+enum ReactionType {
+  like
+  love
+  funny
+  insight
+  unlike
+}
+
+model Reaction {
+  id        String       @id @default(uuid()) @db.Uuid
+  postId    String       @map("post_id") @db.Uuid
+  userId    String       @map("user_id") @db.Uuid
+  type      ReactionType
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  // Deleting a post removes its reactions in the same statement — no cleanup code needed.
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // One reaction per user per post; also what makes the upsert in reaction.service.ts safe.
+  @@unique([postId, userId])
+  // "Who reacted" listing, newest first
+  @@index([postId, updatedAt(sort: Desc)])
+  @@map("reactions")
+}

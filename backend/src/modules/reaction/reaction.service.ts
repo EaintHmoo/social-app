@@ -1,20 +1,17 @@
-import mongoose, { Types } from "mongoose";
-import Post from "../post/post.model.js";
-import Reaction from "./reaction.model.js";
+import { prisma } from "../../shared/config/prisma.js";
 import {
   REACTION_TYPES,
   type ListReactionsQuery,
-  type PopulatedReaction,
   type ReactionSummary,
   type ReactionType,
+  type ReactionWithUser,
 } from "./reaction.types.js";
 import { AppError } from "../../shared/errors/AppError.js";
-
-type Id = Types.ObjectId | string;
+import { isUuid } from "../../shared/errors/prisma.js";
 
 export async function postExists(postId: string): Promise<boolean> {
-  if (!mongoose.isObjectIdOrHexString(postId)) return false;
-  return (await Post.exists({ _id: postId })) !== null;
+  if (!isUuid(postId)) return false;
+  return (await prisma.post.count({ where: { id: postId } })) > 0;
 }
 
 export async function assertPostExists(postId: string): Promise<boolean> {
@@ -22,52 +19,54 @@ export async function assertPostExists(postId: string): Promise<boolean> {
   throw new AppError(404, "Post not found.");
 }
 
-// Create or change the user's reaction in one atomic operation
-export function react(postId: Id, userId: Id, type: ReactionType) {
-  return Reaction.findOneAndUpdate(
-    { post: postId, user: userId },
-    { $set: { type } },
-    { upsert: true, returnDocument: "after", runValidators: true }
-  ).exec();
+// Create or change the user's reaction in one atomic operation. With a unique `where` like this,
+// Prisma runs a native INSERT ... ON CONFLICT DO UPDATE, so two concurrent clicks can't collide.
+export function react(postId: string, userId: string, type: ReactionType) {
+  return prisma.reaction.upsert({
+    where: { postId_userId: { postId, userId } },
+    create: { postId, userId, type },
+    update: { type },
+  });
 }
 
-export async function removeReaction(postId: Id, userId: Id): Promise<void> {
-  await Reaction.deleteOne({ post: postId, user: userId });
+export async function removeReaction(postId: string, userId: string): Promise<void> {
+  // deleteMany (not delete) so removing a reaction that doesn't exist is a no-op, not an error
+  await prisma.reaction.deleteMany({ where: { postId, userId } });
 }
 
 export async function getSummary(postId: string): Promise<ReactionSummary> {
-  // aggregate() doesn't cast strings, so the ObjectId must be explicit
-  const rows = await Reaction.aggregate<{ _id: ReactionType; count: number }>([
-    { $match: { post: new Types.ObjectId(postId) } },
-    { $group: { _id: "$type", count: { $sum: 1 } } },
-  ]);
+  // Laravel: ->groupBy('type')->selectRaw('type, count(*)')
+  const rows = await prisma.reaction.groupBy({
+    by: ["type"],
+    where: { postId },
+    _count: { _all: true },
+  });
 
   const summary = { total: 0 } as ReactionSummary;
   for (const type of REACTION_TYPES) summary[type] = 0;
-  for (const { _id, count } of rows) {
-    summary[_id] = count;
-    summary.total += count;
+  for (const { type, _count } of rows) {
+    summary[type] = _count._all;
+    summary.total += _count._all;
   }
   return summary;
 }
 
-export async function listReactions(postId: string, { type, page, limit }: ListReactionsQuery) {
-  const filter = { post: postId, ...(type && { type }) };
+export async function listReactions(
+  postId: string,
+  { type, page, limit }: ListReactionsQuery
+): Promise<{ items: ReactionWithUser[]; total: number }> {
+  const where = { postId, ...(type && { type }) };
 
-  const [items, total] = await Promise.all([
-    Reaction.find(filter)
-      .sort({ updatedAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .populate("user", "name") // explicit fields: never leak password etc.
-      .lean<PopulatedReaction[]>()
-      .exec(),
-    Reaction.countDocuments(filter),
+  const [items, total] = await prisma.$transaction([
+    prisma.reaction.findMany({
+      where,
+      orderBy: { updatedAt: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+      include: { user: { select: { id: true, name: true } } }, // explicit fields: never leak email etc.
+    }),
+    prisma.reaction.count({ where }),
   ]);
 
   return { items, total };
-}
-
-export async function deleteReactionsForPost(postId: Id): Promise<void> {
-  await Reaction.deleteMany({ post: postId });
 }

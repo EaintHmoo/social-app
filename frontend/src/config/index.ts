@@ -15,7 +15,7 @@ export const config = {
    *
    * "/api" is a same-origin prefix the Vite dev proxy strips before forwarding to :3000 (see
    * vite.config.ts) — the backend itself has no /api prefix. The prefix exists so API URLs can
-   * never collide with the app's own page routes, /tasks being the obvious clash.
+   * never collide with the app's own page routes, /posts being the obvious clash.
    *
    * Set VITE_API_URL for a deployed build where the API lives on another host.
    */

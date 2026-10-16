@@ -81,7 +81,7 @@ async function send(
  * concurrent refreshes with the same token log the user out of everything.
  *
  * Two things can cause that, and each needs its own guard:
- *   1. One tab firing several requests at once — the tasks list and /auth/me both 401 together.
+ *   1. One tab firing several requests at once — the feed and /auth/me both 401 together.
  *      Guarded by `inFlightRefresh`, a module-level promise every caller awaits.
  *   2. Two TABS refreshing at the same moment. A module variable is per-tab and useless here,
  *      so we take a Web Lock, which is shared across all tabs of the same origin. The loser of

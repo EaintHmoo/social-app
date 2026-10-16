@@ -54,13 +54,13 @@ export async function logout(req: Request, res: Response) {
 
 // POST /auth/logout-all — Laravel: `$request->user()->tokens()->delete()`.
 export async function logoutAll(req: Request, res: Response) {
-  const revoked = await sessionService.revokeAllSessions(authUser(req)._id);
+  const revoked = await sessionService.revokeAllSessions(authUser(req).id);
   res.json({ message: "Logged out on all devices.", sessions_revoked: revoked });
 }
 
 // GET /auth/sessions — Laravel: Jetstream's "browser sessions" panel.
 export async function sessions(req: Request, res: Response) {
-  const live = await sessionService.listLiveSessions(authUser(req)._id);
+  const live = await sessionService.listLiveSessions(authUser(req).id);
   res.json({ sessions: live.map((s) => sessionResource(s, req.sessionId)) });
 }
 

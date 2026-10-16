@@ -1,15 +1,15 @@
-import type { PostDocument, PostResource } from "./post.types.js";
+import type { Post, PostResource } from "./post.types.js";
 import { getFileUrl } from "../../shared/services/s3.service.js";
 
 
-export function postResource(post: PostDocument): PostResource {
+export function postResource(post: Post): PostResource {
   return {
-    _id: post._id,
+    id: post.id,
     description: post.description,
     image: getFileUrl(post.imageKey),
     seenBy: post.seenBy,
     commentBy: post.commentBy,
-    user: post.user,
+    userId: post.userId,
     createdAt: post.createdAt,
     updatedAt: post.updatedAt,
   };

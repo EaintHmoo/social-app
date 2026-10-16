@@ -1,9 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
-import mongoose from "mongoose";
 import multer from "multer";
 import { z } from "zod";
 import { AppError, type FieldErrors } from "../errors/AppError.js";
 import type { ErrorBody, ExposableHttpError } from "../types/errors.js";
+import { isUniqueViolation } from "../errors/prisma.js";
 
 function isExposableHttpError(err: unknown): err is ExposableHttpError {
   return (
@@ -33,20 +33,9 @@ export default function errorHandler(err: unknown, _req: Request, res: Response,
       : send(res, 400, err.message);
   }
 
-  // Unique index hit (e.g. duplicate email) → 409 instead of 500
-  if (isDuplicateKeyError(err)) {
-    const field = Object.keys(err.keyValue ?? {})[0] ?? "field";
-    return send(res, 409, `That ${field} is already taken.`, { [field]: [`That ${field} is already taken.`] });
-  }
-
-  // Mongoose schema rules (your post pre("validate") hook) → same 422 shape as zod
-  if (err instanceof mongoose.Error.ValidationError) {
-    const errors: FieldErrors = {};
-    for (const [field, e] of Object.entries(err.errors)) errors[field] = [e.message];
-    return send(res, 422, Object.values(errors)[0]?.[0] ?? "Invalid data.", errors);
-  }
-
-  if (err instanceof mongoose.Error.CastError) return send(res, 400, `Invalid ${err.path}.`);
+  // Unique constraint hit that a service didn't handle itself → 409 instead of 500.
+  // The DB error's details (table, constraint names) are deliberately not sent to the client.
+  if (isUniqueViolation(err)) return send(res, 409, "That value is already taken.");
 
   if (isExposableHttpError(err)) return send(res, err.status, err.message); // malformed JSON etc.
 
@@ -57,8 +46,4 @@ export default function errorHandler(err: unknown, _req: Request, res: Response,
 // Unknown URL → same JSON shape instead of Express's HTML 404 page
 export function notFoundHandler(req: Request, _res: Response, next: NextFunction) {
   next(new AppError(404, `Route not found: ${req.method} ${req.path}`));
-}
-
-function isDuplicateKeyError(err: unknown): err is { code: 11000; keyValue?: Record<string, unknown> } {
-  return typeof err === "object" && err !== null && (err as { code?: unknown }).code === 11000;
 }

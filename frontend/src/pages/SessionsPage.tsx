@@ -24,7 +24,9 @@ export function SessionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState(false);
 
-  // No setLoading(true) here — see the same note in TasksPage. `retry` below handles that.
+  // Note there is no setLoading(true) at the top: `loading` already starts true for the first
+  // load, and setting state synchronously inside the effect below would force a second render
+  // before the request had even left. `retry` sets it instead, since by then it really is false.
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
       setSessions(await authApi.listSessions(signal));
@@ -40,7 +42,10 @@ export function SessionsPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    // oxlint-disable-next-line react/set-state-in-effect -- false positive, see TasksPage.
+    // False positive: the rule flags any effect that calls a function containing setState, but
+    // every setState inside `load` runs after an await, so none of them happen during this
+    // effect's synchronous pass.
+    // oxlint-disable-next-line react/set-state-in-effect
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);

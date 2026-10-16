@@ -1,6 +1,6 @@
 import type { Request } from "express";
 import { AppError } from "../../shared/errors/AppError.js";
-import type { DeviceInfo, UserDocument } from "./auth.types.js";
+import type { DeviceInfo, SafeUser } from "./auth.types.js";
 
 // Rough per-device fingerprint, captured once at login and used to make /auth/sessions readable.
 // This lives on the HTTP side on purpose: controllers read it off `req` and hand services a plain
@@ -17,7 +17,7 @@ export function deviceInfo(req: Request): DeviceInfo {
 // Laravel: `$request->user()` on a route behind `auth:sanctum`. The auth middleware sets req.user,
 // but the type system can't know that middleware ran, so protected handlers read it through here
 // instead of asserting it's non-null.
-export function authUser(req: Request): UserDocument {
+export function authUser(req: Request): SafeUser {
   if (!req.user) {
     throw new AppError(401, "Unauthenticated.");
   }

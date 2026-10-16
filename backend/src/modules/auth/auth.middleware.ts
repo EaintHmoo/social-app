@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { verifyAccessToken } from "./jwt.js";
-import User from "./user.model.js";
+import { prisma } from "../../shared/config/prisma.js";
+import { isUuid } from "../../shared/errors/prisma.js";
 import { AppError } from "../../shared/errors/AppError.js";
 import type { AccessTokenPayload } from "./auth.types.js";
 
@@ -19,7 +20,8 @@ export default async function auth(req: Request, _res: Response, next: NextFunct
     throw new AppError(401, "Invalid or expired token.");
   }
 
-  const user = await User.findById(payload.sub);
+  // isUuid: tokens signed before the move to Postgres carry a Mongo ObjectId as `sub`.
+  const user = isUuid(payload.sub) ? await prisma.user.findUnique({ where: { id: payload.sub } }) : null;
   if (!user) throw new AppError(401, "Unauthenticated.");
 
   req.user = user;

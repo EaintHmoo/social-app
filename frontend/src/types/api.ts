@@ -1,26 +1,16 @@
-// The JSON shapes the backend actually sends — mirrors backend/src/types/resources.ts.
+// The JSON shapes the backend actually sends — mirrors the *.resource.ts files in backend/src/modules.
 //
-// Two deliberate differences from the backend's types, because these have been through
-// JSON.stringify by the time we see them:
-//   - Mongoose `Types.ObjectId`  ->  string
-//   - `Date`                     ->  string (an ISO timestamp like "2026-09-16T10:30:00.000Z")
-// Typing them as Date here would be a lie: `task.createdAt.getFullYear()` would compile and
-// then crash at runtime. Parse with `new Date(value)` at the point of display instead.
+// One deliberate difference from the backend's types, because these have been through
+// JSON.stringify by the time we see them: `Date` -> string (an ISO timestamp like
+// "2026-09-16T10:30:00.000Z"). Typing them as Date here would be a lie:
+// `session.signed_in_at.getFullYear()` would compile and then crash at runtime. Parse with
+// `new Date(value)` at the point of display instead.
 
 /** GET /auth/me, and the `user` field of register/login. */
 export interface User {
   id: string;
   name: string;
   email: string;
-}
-
-/** An item from GET /tasks. Note `_id`, not `id` — taskResource.ts sends the raw Mongo field. */
-export interface Task {
-  _id: string;
-  title: string;
-  done: boolean;
-  createdAt: string;
-  updatedAt: string;
 }
 
 /** One row of GET /auth/sessions — a device that is currently signed in. */

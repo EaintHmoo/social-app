@@ -1,7 +1,7 @@
 import jwt, { type SignOptions } from "jsonwebtoken";
 import crypto from "node:crypto";
 import { requireEnv } from "../../shared/config/env.js";
-import type { AccessTokenPayload, RefreshTokenPayload, UserDocument } from "./auth.types.js";
+import type { AccessTokenPayload, RefreshTokenPayload, SafeUser } from "./auth.types.js";
 
 // Laravel: this whole file replaces what Laravel Sanctum/Passport/`tymon/jwt-auth` does for you.
 // Since plain Express has no built-in auth, we write the token logic ourselves.
@@ -11,7 +11,7 @@ import type { AccessTokenPayload, RefreshTokenPayload, UserDocument } from "./au
 //   - access token:  short-lived, sent as "Authorization: Bearer <token>" on every request.
 //   - refresh token: long-lived, only sent to POST /auth/refresh to obtain a new access token.
 // Keeping the access token short-lived limits the damage if it leaks; the refresh token
-// is stored (hashed), one row per token, so it can be revoked on logout — see refreshToken.model.ts.
+// is stored (hashed), one row per token, so it can be revoked on logout — see session.service.ts.
 
 // Secrets are read on use rather than at import, so a missing one throws inside the request
 // (and is handled like any other error) instead of crashing module loading.
@@ -25,9 +25,9 @@ const REFRESH_EXPIRES_IN = (process.env.JWT_REFRESH_EXPIRES_IN || "7d") as SignO
 // `JWTAuth::fromUser($user)` (tymon/jwt-auth). We sign a JWT containing the user id.
 // `sid` = which session (which device login) this token belongs to. It lets POST /auth/logout
 // revoke just the device that asked, instead of signing the user out everywhere.
-export function signAccessToken(user: UserDocument, sessionId: string): string {
+export function signAccessToken(user: SafeUser, sessionId: string): string {
   return jwt.sign(
-    { sub: user._id.toString(), email: user.email, sid: sessionId }, // "sub" = subject, standard JWT claim for user id
+    { sub: user.id, email: user.email, sid: sessionId }, // "sub" = subject, standard JWT claim for user id
     accessSecret(),
     { expiresIn: ACCESS_EXPIRES_IN }
   );
@@ -38,16 +38,16 @@ export function signAccessToken(user: UserDocument, sessionId: string): string {
 // `jti` (a random token id) makes every refresh token unique. Without it the payload is just
 // { sub, iat, exp } — and since iat/exp are whole SECONDS, two refreshes inside the same second
 // would produce the byte-identical token, so rotation would hand back the token it just replaced.
-export function signRefreshToken(user: UserDocument, sessionId: string): string {
+export function signRefreshToken(user: SafeUser, sessionId: string): string {
   return jwt.sign(
-    { sub: user._id.toString(), sid: sessionId, jti: crypto.randomUUID() },
+    { sub: user.id, sid: sessionId, jti: crypto.randomUUID() },
     refreshSecret(),
     { expiresIn: REFRESH_EXPIRES_IN }
   );
 }
 
-// The `exp` claim we just signed, as a Date. We store this on the refresh-token document so
-// Mongo's TTL index can sweep the row at exactly the moment the token itself dies.
+// The `exp` claim we just signed, as a Date. We store this on the refresh-token row so
+// listLiveSessions() can ignore it from exactly the moment the token itself dies.
 export function tokenExpiryDate(token: string): Date {
   const payload = jwt.decode(token);
   if (!payload || typeof payload === "string" || payload.exp === undefined) {

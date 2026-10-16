@@ -39,7 +39,7 @@ export function RequireGuest() {
   const { user, booting } = useAuth();
 
   if (booting) return <BootingScreen />;
-  if (user) return <Navigate to="/tasks" replace />;
+  if (user) return <Navigate to="/home" replace />;
 
   return <Outlet />;
 }

@@ -18,8 +18,8 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   // RequireAuth stashed the page the user was originally aiming for; send them back there
-  // after a successful login instead of always dumping them on /tasks.
-  const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/tasks";
+  // after a successful login instead of always dumping them on /home.
+  const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? "/home";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     // Without this the browser does a full page navigation and React never sees the submit.

@@ -1,3 +1,6 @@
 .env
 node_modules
 dist
+
+# Prisma client, rebuilt from prisma/schema.prisma by `npm install` / `npm run db:generate`
+src/generated

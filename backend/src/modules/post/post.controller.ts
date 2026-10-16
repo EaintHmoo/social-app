@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import * as postService from "./post.service.js";
 import { postResource } from "./post.resource.js";
-import type { CreatePostInput, PostDocument, UpdatePostInput } from "./post.types.js";
+import type { CreatePostInput, UpdatePostInput } from "./post.types.js";
 import { uploadImage, type ImageUploadOptions } from "../../shared/services/image-upload.service.js";
 import { deleteFile } from "../../shared/services/s3.service.js";
 import { authUser } from "../auth/auth.request.js";
@@ -22,7 +22,7 @@ export async function store(req: Request<{}, unknown, CreatePostInput>, res: Res
 
   try {
     const post = await postService.createPost({
-      description, seenBy, commentBy, imageKey, user: authUser(req)._id,
+      description, seenBy, commentBy, imageKey, userId: authUser(req).id,
     });
     res.status(201).json(postResource(post));
   } catch (err) {
@@ -32,7 +32,7 @@ export async function store(req: Request<{}, unknown, CreatePostInput>, res: Res
 }
 
 export async function update(req: Request<IdParams, unknown, UpdatePostInput>, res: Response) {
-  const post = await postService.getOwnedPost(req.params.id, authUser(req)._id);
+  const post = await postService.getOwnedPost(req.params.id, authUser(req).id);
   if (!post) return;
 
   const { description, seenBy, commentBy, removeImage } = req.body;
@@ -70,7 +70,7 @@ export async function update(req: Request<IdParams, unknown, UpdatePostInput>, r
 
 // Laravel: destroy() — `delete` is a reserved word in JS
 export async function destroy(req: Request<IdParams>, res: Response) {
-  const post = await postService.getOwnedPost(req.params.id, authUser(req)._id);
+  const post = await postService.getOwnedPost(req.params.id, authUser(req).id);
   if (!post) return;
 
   const { imageKey } = post;

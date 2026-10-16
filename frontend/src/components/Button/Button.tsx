@@ -29,7 +29,7 @@ export function Button({
   return (
     <button
       // Disabling while loading is the double-submit guard. It matters more than usual here:
-      // two POST /tasks in flight would create two identical tasks, and the backend has no
+      // two POST /posts in flight would create two identical posts, and the backend has no
       // idempotency key to collapse them.
       disabled={disabled || loading}
       aria-busy={loading}

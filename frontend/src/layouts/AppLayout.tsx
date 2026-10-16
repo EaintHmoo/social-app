@@ -42,9 +42,6 @@ export function AppLayout() {
             <NavLink to="/home" className={linkClass}>
               Home
             </NavLink>
-            <NavLink to="/tasks" className={linkClass}>
-              Tasks
-            </NavLink>
             <NavLink to="/devices" className={linkClass}>
               Devices
             </NavLink>

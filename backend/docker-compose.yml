@@ -3,19 +3,19 @@ services:
     build: .
     container_name: my-app-api
     restart: unless-stopped
-    # Wait until mongo actually answers pings, not just until its container exists —
-    # otherwise the first mongoose.connect() races the database and the app exits.
+    # Wait until postgres actually accepts connections, not just until its container exists —
+    # otherwise the startup migration and prisma.$connect() race the database and the app exits.
     depends_on:
-      mongo:
+      postgres:
         condition: service_healthy
     ports:
       - "127.0.0.1:3000:3000"
     environment:
       PORT: 3000
-      # Inside the compose network the database is "mongo", never 127.0.0.1 —
-      # localhost in a container means the container itself. This overrides MONGO_URI
+      # Inside the compose network the database is "postgres", never 127.0.0.1 —
+      # localhost in a container means the container itself. This overrides DATABASE_URL
       # from .env, since dotenv does not overwrite variables already in the environment.
-      MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASS}@mongo:27017/myapp?authSource=admin
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
@@ -34,40 +34,27 @@ services:
       # hidden by the host folder mounted above.
       - /app/node_modules
 
-  mongo:
-    image: mongo:8
-    container_name: my-app-mongo
+  postgres:
+    image: postgres:18
+    container_name: my-app-postgres
     restart: unless-stopped
     ports:
-      - "127.0.0.1:27017:27017"
+      - "127.0.0.1:5432:5432"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASS}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - mongo-data:/data/db
+      # Postgres 18 images keep data under /var/lib/postgresql/<version>, so mount the parent.
+      - postgres-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Browser GUI for MongoDB, like phpMyAdmin/Adminer for MySQL.
-  # Visit http://localhost:8081 after `docker compose up -d`.
-  mongo-express:
-    image: mongo-express:latest
-    container_name: my-app-mongo-express
-    restart: unless-stopped
-    depends_on:
-      - mongo
-    ports:
-      - "127.0.0.1:8081:8081"
-    environment:
-      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_USER}
-      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_PASS}
-      # "mongo" here is the service name above, not localhost — Docker's internal DNS
-      # resolves service names to the right container on the compose network.
-      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_USER}:${MONGO_PASS}@mongo:27017/
-      ME_CONFIG_BASICAUTH: "false"
+  # No separate GUI container needed: `npm run db:studio` opens Prisma Studio in the browser
+  # (Laravel: like TablePlus/Adminer), reading DATABASE_URL from .env.
 
 volumes:
-  mongo-data:
+  postgres-data:

@@ -9,6 +9,11 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -16,12 +21,13 @@
   "license": "ISC",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1143.0",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.9.5",
     "multer": "^2.4.0",
     "sharp": "^0.35.5",
     "zod": "^4.6.4"
@@ -32,6 +38,7 @@
     "@types/multer": "^2.3.0",
     "@types/node": "^22.20.2",
     "nodemon": "^3.1.14",
+    "prisma": "^7.10.1",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   }

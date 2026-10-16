@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import * as reactionService from "./reaction.service.js";
 import { reactionResource } from "./reaction.resource.js";
 import { listReactionsQuerySchema } from "./reaction.validator.js";
-import type { PopulatedReaction, ReactInput, ReactionUser } from "./reaction.types.js";
+import type { ReactInput } from "./reaction.types.js";
 import { authUser } from "../auth/auth.request.js";
 
 type PostParams = { postId: string };
@@ -30,9 +30,7 @@ export async function index(req: Request<PostParams>, res: Response) {
 
   res.json({
     summary,
-    data: items
-      .filter((r): r is PopulatedReaction & { user: ReactionUser } => r.user !== null)
-      .map(reactionResource),
+    data: items.map(reactionResource),
     meta: { page: query.page, limit: query.limit, total },
   });
 }
@@ -42,7 +40,7 @@ export async function react(req: Request<PostParams, unknown, ReactInput>, res: 
   if (!(await reactionService.assertPostExists(req.params.postId))) return;
 
   const { postId } = req.params;
-  await reactionService.react(postId, authUser(req)._id, req.body.type);
+  await reactionService.react(postId, authUser(req).id, req.body.type);
 
   res.json({
     myReaction: req.body.type,
@@ -55,7 +53,7 @@ export async function remove(req: Request<PostParams>, res: Response) {
   if (!(await reactionService.assertPostExists(req.params.postId))) return;
 
   const { postId } = req.params;
-  await reactionService.removeReaction(postId, authUser(req)._id);
+  await reactionService.removeReaction(postId, authUser(req).id);
 
   res.json({
     myReaction: null,

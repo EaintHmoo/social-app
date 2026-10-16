@@ -3,7 +3,6 @@ import { RequireAuth, RequireGuest } from "../features/auth";
 import { AppLayout } from "../layouts/AppLayout";
 import { LoginPage } from "../pages/LoginPage";
 import { RegisterPage } from "../pages/RegisterPage";
-import { TasksPage } from "../pages/TasksPage";
 import { SessionsPage } from "../pages/SessionsPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
 import HomePage from "../pages/HomePage";
@@ -21,7 +20,7 @@ import HomePage from "../pages/HomePage";
 export function AppRoutes() {
   return (
     <Routes>
-      {/* Guests only — a signed-in user gets bounced to /tasks. */}
+      {/* Guests only — a signed-in user gets bounced to /home. */}
       <Route element={<RequireGuest />}>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
@@ -32,13 +31,12 @@ export function AppRoutes() {
       <Route element={<RequireAuth />}>
         <Route element={<AppLayout />}>
           <Route path="/home" element={<HomePage />} />
-          <Route path="/tasks" element={<TasksPage />} />
           <Route path="/devices" element={<SessionsPage />} />
         </Route>
       </Route>
 
       {/* "/" is not a page of its own — RequireAuth sends signed-out visitors to /login. */}
-      <Route path="/" element={<Navigate to="/tasks" replace />} />
+      <Route path="/" element={<Navigate to="/home" replace />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
