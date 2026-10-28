@@ -72,7 +72,7 @@ export function SessionsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-2xl space-y-6 py-5">
       <section className="space-y-2">
         <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">
           Signed-in devices

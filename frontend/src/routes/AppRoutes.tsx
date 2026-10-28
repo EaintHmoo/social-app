@@ -5,7 +5,12 @@ import { LoginPage } from "../pages/LoginPage";
 import { RegisterPage } from "../pages/RegisterPage";
 import { SessionsPage } from "../pages/SessionsPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
-import HomePage from "../pages/HomePage";
+import { MeetingsPage } from "../pages/MeetingsPage";
+import { FeedView } from "@/components/Feed/feed-view";
+import { MessagesView } from "@/components/Messages/messages-view";
+import { NotificationsView } from "@/components/Notifications/notifications-view";
+import { ProfileView } from "@/components/Profile/profile-view";
+import { SearchView } from "@/components/Search/search-view";
 
 /**
  * Laravel: this is routes/web.php — every URL the app answers, in one readable place.
@@ -30,7 +35,14 @@ export function AppRoutes() {
           what they render inside. */}
       <Route element={<RequireAuth />}>
         <Route element={<AppLayout />}>
-          <Route path="/home" element={<HomePage />} />
+          {/* The views below still read from lib/mock-data.ts; each gets swapped onto the real
+              API as its backend module lands. Nav entries for these live in Layout/nav.ts. */}
+          <Route path="/home" element={<FeedView />} />
+          <Route path="/meetings" element={<MeetingsPage />} />
+          <Route path="/messages" element={<MessagesView />} />
+          <Route path="/notifications" element={<NotificationsView />} />
+          <Route path="/search" element={<SearchView />} />
+          <Route path="/profile" element={<ProfileView />} />
           <Route path="/devices" element={<SessionsPage />} />
         </Route>
       </Route>

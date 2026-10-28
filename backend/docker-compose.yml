@@ -58,3 +58,7 @@ services:
 
 volumes:
   postgres-data:
+    # Fixed name: otherwise Compose prefixes it with the project name, so running from the repo
+    # root ("docker-mongo_...") and from backend/ ("backend_...") would each get a separate, empty
+    # database. This is the name the existing data already lives under.
+    name: backend_postgres-data

@@ -10,6 +10,8 @@ declare global {
       JWT_REFRESH_SECRET?: string;
       JWT_REFRESH_EXPIRES_IN?: string;
       JWT_SESSION_MAX_LIFETIME?: string;
+      NODE_ENV?: string;
+      SEED_USER_PASSWORD?: string;
     }
   }
 }

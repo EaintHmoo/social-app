@@ -1,0 +1,28 @@
+# Runs the whole stack: `docker compose up` from the repo root.
+#
+# `include` pulls in backend/docker-compose.yml as-is (api + postgres). It is resolved relative to
+# its own folder and reads backend/.env for its ${...} values, so that file still works on its own
+# (`cd backend && docker compose up` = backend only).
+include:
+  - backend/docker-compose.yml
+
+services:
+  web:
+    build: ./frontend
+    container_name: my-app-web
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "127.0.0.1:5173:5173"
+    environment:
+      # The Vite dev proxy forwards /api/* to the backend. Inside the compose network the backend
+      # is the "app" service, not localhost (localhost here is the web container itself).
+      API_PROXY_TARGET: http://app:3000
+      # File change events from a macOS bind mount don't reach the Linux container, so Vite has
+      # to poll to pick up edits (same reason the backend runs nodemon -L).
+      VITE_USE_POLLING: "true"
+    volumes:
+      # Live-mount the source for hot reload; keep the container's Linux node_modules.
+      - ./frontend:/app
+      - /app/node_modules

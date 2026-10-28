@@ -11,6 +11,8 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Only set in Docker (see the root docker-compose.yml); on the host, native file events work.
+    watch: process.env.VITE_USE_POLLING === "true" ? { usePolling: true, interval: 300 } : undefined,
     proxy: {
       // The browser refuses a cross-origin call from :5173 to :3000 unless the server sends CORS
       // headers, and backend/src/server.ts does not register any CORS middleware.
@@ -24,7 +26,8 @@ export default defineConfig({
       // http://localhost:5173/tasks would be proxied to the API and render raw JSON instead of
       // the app. Namespacing every API call keeps the two sets of URLs from ever colliding.
       "/api": {
-        target: "http://localhost:3000",
+        // In Docker the backend is reachable as "app", not localhost — compose sets this.
+        target: process.env.API_PROXY_TARGET ?? "http://localhost:3000",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
