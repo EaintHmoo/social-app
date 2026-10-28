@@ -1,14 +1,13 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Search, Moon, Sun, Bell, MessageCircle, Menu } from 'lucide-react';
+import { Search, Bell, MessageCircle, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Logo } from '@/components/Layout/logo';
+import { ThemeToggle } from '@/components/Layout/theme-toggle';
 import { navItems, type UnreadCounts } from '@/components/Layout/nav';
 import { cn } from '@/lib/utils';
 
 interface TopBarProps {
-  theme: 'light' | 'dark';
-  onToggleTheme: () => void;
   unread: UnreadCounts;
   onOpenMenu: () => void;
 }
@@ -18,7 +17,7 @@ const extraTitles: Record<string, { title: string; subtitle: string }> = {
   '/devices': { title: 'Devices', subtitle: 'Where you are signed in' },
 };
 
-export function TopBar({ theme, onToggleTheme, unread, onOpenMenu }: TopBarProps) {
+export function TopBar({ unread, onOpenMenu }: TopBarProps) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   // The heading is derived from the URL — the router is the single source of "which page am I on".
@@ -54,13 +53,7 @@ export function TopBar({ theme, onToggleTheme, unread, onOpenMenu }: TopBarProps
         </div>
 
         <div className="ml-auto flex items-center gap-1 sm:ml-2">
-          <button
-            onClick={onToggleTheme}
-            className="grid h-9 w-9 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            aria-label="Toggle theme"
-          >
-            {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-          </button>
+          <ThemeToggle />
 
           {/* asChild makes the Button render its child <Link> instead of a <button>, so this is a
               real link (middle-click, right-click "open in new tab") with button styling. */}

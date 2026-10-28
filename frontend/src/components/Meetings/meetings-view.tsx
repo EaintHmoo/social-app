@@ -150,6 +150,7 @@ export function MeetingsView({ onOpenNew }: { onOpenNew: () => void }) {
       )}
 
       <PreJoinDialog
+        key={joinTarget?.id}
         meeting={joinTarget}
         onClose={() => setJoinTarget(null)}
         onJoin={() => {

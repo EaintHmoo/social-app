@@ -5,6 +5,20 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SocialMeet</title>
+    <!--
+      Runs before the first paint, so a dark-mode user never sees a white flash while the JS
+      bundle downloads. It must stay inline and tiny: anything loaded from a file would arrive
+      too late. Keep the storage key in sync with src/hooks/use-theme.ts.
+    -->
+    <script>
+      try {
+        var t = localStorage.getItem("sm-theme");
+        if (t !== "light" && t !== "dark") {
+          t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.classList.toggle("dark", t === "dark");
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

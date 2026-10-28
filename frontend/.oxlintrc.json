@@ -4,5 +4,16 @@
   "rules": {
     "react/rules-of-hooks": "error",
     "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
+  },
+  "overrides": [
+    {
+      // shadcn generates these files and exports their cva helpers (buttonVariants, …) next to
+      // the component by design. Editing them would be undone by the next `shadcn add`, so the
+      // rule is relaxed here only — the cost is a full page reload when one of them changes.
+      "files": ["src/components/ui/**"],
+      "rules": {
+        "react/only-export-components": "off"
+      }
+    }
+  ]
 }

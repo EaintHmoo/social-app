@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ThemeToggle } from "@/components/Layout/theme-toggle";
 
 /** The centred card that the login and register forms share. */
 export function AuthLayout({
@@ -11,7 +12,8 @@ export function AuthLayout({
   children: ReactNode;
 }) {
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-slate-50 px-4 py-12 dark:bg-slate-950">
+    <div className="relative flex min-h-dvh items-center justify-center bg-slate-50 px-4 py-12 dark:bg-slate-950">
+      <ThemeToggle className="absolute right-4 top-4" />
       <div className="w-full max-w-sm space-y-6">
         <header className="space-y-1 text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Mic, MicOff, Video, VideoOff, Settings, ArrowRight, ShieldCheck, DoorOpen } from 'lucide-react';
 import {
   Dialog,
@@ -18,18 +18,14 @@ interface Props {
   onJoin: () => void;
 }
 
+/**
+ * Render with `key={meeting?.id}` so mic/camera toggles start fresh for each meeting: a new key
+ * makes React mount a new instance, which re-runs the useState initialisers below.
+ */
 export function PreJoinDialog({ meeting, onClose, onJoin }: Props) {
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
   const [name] = useState(users.me.name);
-
-  // Reset device toggles each time a new meeting is opened
-  useEffect(() => {
-    if (meeting) {
-      setMicOn(true);
-      setCamOn(true);
-    }
-  }, [meeting?.id]);
 
   return (
     <Dialog open={!!meeting} onOpenChange={(o) => !o && onClose()}>

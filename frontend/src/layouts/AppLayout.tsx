@@ -8,7 +8,6 @@ import { RightRail } from "@/components/Layout/right-rail";
 import { MobileNav } from "@/components/Layout/mobile-nav";
 import type { UnreadCounts } from "@/components/Layout/nav";
 import { NewMeetingDialog } from "@/components/Meetings/new-meeting-dialog";
-import { useTheme } from "@/hooks/use-theme";
 import { conversations, notifications } from "@/lib/mock-data";
 import type { AppLayoutContext } from "./useAppLayout";
 
@@ -29,7 +28,6 @@ const unread: UnreadCounts = {
 export function AppLayout() {
   const { signOut, notice, dismissNotice } = useAuth();
   const navigate = useNavigate();
-  const { theme, toggle } = useTheme();
   const [signingOut, setSigningOut] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   // Owned here (not in MeetingsView) because the sidebar's "New Meeting" button opens it from
@@ -75,7 +73,7 @@ export function AppLayout() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar theme={theme} onToggleTheme={toggle} unread={unread} onOpenMenu={() => setMenuOpen(true)} />
+        <TopBar unread={unread} onOpenMenu={() => setMenuOpen(true)} />
 
         <div className="flex flex-1 gap-6 px-4 md:px-6">
           {/* pb-24 keeps the last item clear of the fixed mobile bottom nav. */}

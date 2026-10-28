@@ -7,10 +7,11 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Tells the browser to render form controls and scrollbars in the OS light/dark setting, which
-   is what the dark: classes throughout the components are keyed to. */
+/* Dark mode is class-based: <html class="dark">, set by index.html before first paint and toggled
+   by hooks/use-theme.ts. color-scheme tells the browser which native form controls and
+   scrollbars to draw, so it has to follow that class too — not the OS setting. */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -100,6 +101,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
